@@ -93,7 +93,7 @@ export function TopBar() {
           ≡
         </button>
         {showMenu && (
-          <div className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[140px] z-50">
+          <div className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[200px] z-50">
             <button
               onClick={handleNew}
               className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
