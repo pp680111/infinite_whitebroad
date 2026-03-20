@@ -17,14 +17,20 @@ export function CardEditor({
   onCancel
 }: CardEditorProps) {
   const [title, setTitle] = useState(initialTitle)
-  const [content, setContent] = useState(initialContent)
   const contentRef = useRef<HTMLDivElement>(null)
+  const initializedRef = useRef(false)
 
+  // Only set initial content once, then let browser handle input naturally
   useEffect(() => {
+    if (contentRef.current && !initializedRef.current) {
+      contentRef.current.innerHTML = initialContent || ''
+      initializedRef.current = true
+    }
     contentRef.current?.focus()
-  }, [])
+  }, [initialContent])
 
   const handleSave = () => {
+    const content = contentRef.current?.innerHTML || ''
     const sanitizedContent = DOMPurify.sanitize(content, {
       ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'u', 's', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'blockquote', 'code', 'pre', 'a'],
       ALLOWED_ATTR: ['href']
@@ -65,10 +71,9 @@ export function CardEditor({
       <div
         ref={contentRef}
         contentEditable
+        suppressContentEditableWarning
         className="p-3 text-sm outline-none min-h-[60px]"
         style={{ minHeight: '60px' }}
-        onInput={(e) => setContent(e.currentTarget.innerHTML)}
-        dangerouslySetInnerHTML={{ __html: content }}
       />
       <div className="p-2 border-t border-gray-100 flex justify-end gap-2">
         <button
