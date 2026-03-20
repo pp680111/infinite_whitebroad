@@ -1,12 +1,25 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useCanvasStore } from '../../stores/canvasStore'
 import { useSearchStore } from '../../stores/searchStore'
 
 export function TopBar() {
-  const { documentName, setDocumentName, isDirty } = useCanvasStore()
+  const { documentName, setDocumentName, isDirty, newDocument, saveDocument, saveDocumentAs, loadDocument } = useCanvasStore()
   const { open: openSearch } = useSearchStore()
   const [isEditing, setIsEditing] = useState(false)
   const [editName, setEditName] = useState(documentName)
+  const [showMenu, setShowMenu] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   const handleNameClick = () => {
     setEditName(documentName)
@@ -27,12 +40,86 @@ export function TopBar() {
     }
   }
 
+  const handleNew = async () => {
+    setShowMenu(false)
+    try {
+      newDocument()
+    } catch (e) {
+      console.warn('New document failed in browser mode')
+    }
+  }
+
+  const handleOpen = async () => {
+    setShowMenu(false)
+    try {
+      await loadDocument()
+    } catch (e) {
+      console.warn('Open document failed in browser mode')
+    }
+  }
+
+  const handleSave = async () => {
+    setShowMenu(false)
+    try {
+      await saveDocument()
+    } catch (e) {
+      console.warn('Save document failed in browser mode')
+    }
+  }
+
+  const handleSaveAs = async () => {
+    setShowMenu(false)
+    try {
+      await saveDocumentAs()
+    } catch (e) {
+      console.warn('Save as failed in browser mode')
+    }
+  }
+
   return (
     <div className="absolute top-0 left-0 right-0 h-12 bg-white/90 backdrop-blur-sm border-b border-gray-200 flex items-center px-4 z-40">
-      {/* Left: Menu button placeholder */}
-      <button className="w-8 h-8 flex items-center justify-center hover:bg-gray-100 rounded-lg text-lg">
-        ≡
-      </button>
+      {/* Left: Menu button */}
+      <div className="relative" ref={menuRef}>
+        <button
+          onClick={() => setShowMenu(!showMenu)}
+          className="w-8 h-8 flex items-center justify-center hover:bg-gray-100 rounded-lg text-lg"
+        >
+          ≡
+        </button>
+        {showMenu && (
+          <div className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[140px] z-50">
+            <button
+              onClick={handleNew}
+              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+            >
+              <span>📄</span> 新建
+              <span className="ml-auto text-gray-400 text-xs">Ctrl+N</span>
+            </button>
+            <button
+              onClick={handleOpen}
+              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+            >
+              <span>📂</span> 打开...
+              <span className="ml-auto text-gray-400 text-xs">Ctrl+O</span>
+            </button>
+            <div className="border-t border-gray-100 my-1" />
+            <button
+              onClick={handleSave}
+              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+            >
+              <span>💾</span> 保存
+              <span className="ml-auto text-gray-400 text-xs">Ctrl+S</span>
+            </button>
+            <button
+              onClick={handleSaveAs}
+              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+            >
+              <span>📥</span> 另存为...
+              <span className="ml-auto text-gray-400 text-xs">Ctrl+Shift+S</span>
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Center: Document name */}
       <div className="flex-1 text-center">

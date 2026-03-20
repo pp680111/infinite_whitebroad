@@ -69,6 +69,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   loadDocument: async () => {
+    if (!window.electronAPI) {
+      console.warn('Load document failed: electronAPI not available')
+      return
+    }
     const result = await window.electronAPI.file.open()
     if (result.success && result.data) {
       const data = result.data as {
@@ -91,6 +95,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   saveDocument: async () => {
+    if (!window.electronAPI) {
+      console.warn('Save document failed: electronAPI not available')
+      return
+    }
     const { filePath } = get()
     const data = get().getDocumentData()
     const result = filePath
@@ -103,6 +111,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   saveDocumentAs: async () => {
+    if (!window.electronAPI) {
+      console.warn('Save document failed: electronAPI not available')
+      return
+    }
     const data = get().getDocumentData()
     const result = await window.electronAPI.file.saveAs(data)
     if (result.success && result.filePath) {

@@ -31,7 +31,14 @@ export function setupIPC(mainWindow: BrowserWindow) {
 
   ipcMain.handle('file:save', async (_, { data, filePath }) => {
     if (!filePath) {
-      return ipcMain.emit('file:save-as', _, { data })
+      // No filePath means save as - show save dialog
+      const result = await dialog.showSaveDialog(mainWindow, {
+        filters: [{ name: 'Whiteboard', extensions: ['whiteboard'] }]
+      })
+      if (result.canceled || !result.filePath) {
+        return { success: false, canceled: true }
+      }
+      filePath = result.filePath
     }
     try {
       const tmpPath = filePath + '.tmp'
@@ -52,6 +59,8 @@ export function setupIPC(mainWindow: BrowserWindow) {
     }
     const filePath = result.filePath
     try {
+      const tmpPath = filePath + '.tmp'
+      await writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf-8')
       await writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8')
       return { success: true, filePath }
     } catch (error) {
