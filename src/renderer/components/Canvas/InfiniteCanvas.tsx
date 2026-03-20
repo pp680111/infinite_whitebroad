@@ -318,6 +318,41 @@ export function InfiniteCanvas() {
     useElementsStore.getState().setEditingCard(null)
   }, [])
 
+  // Navigate canvas to show a specific card
+  const navigateToCard = useCallback((cardId: string) => {
+    const canvas = fabricRef.current
+    if (!canvas) return
+
+    const card = useElementsStore.getState().getElement(cardId) as CardElement | undefined
+    if (!card) return
+
+    // Exit editing mode if active
+    setEditingCard(null)
+    useElementsStore.getState().setEditingCard(null)
+
+    // Calculate center of the card in world coordinates
+    const cardCenterX = card.position.x + card.size.width / 2
+    const cardCenterY = card.position.y + card.size.height / 2
+
+    // Get canvas center in viewport coordinates
+    const viewportCenterX = window.innerWidth / 2
+    const viewportCenterY = (window.innerHeight - 48) / 2 + 48 // Account for top bar
+
+    // Get current zoom
+    const currentZoom = canvas.getZoom()
+
+    // Calculate the offset needed to center the card
+    const vpt = canvas.viewportTransform!
+    vpt[4] = viewportCenterX - cardCenterX * currentZoom
+    vpt[5] = viewportCenterY - cardCenterY * currentZoom
+
+    canvas.setViewportTransform(vpt)
+    canvas.renderAll()
+
+    // Select the card
+    useElementsStore.getState().setSelected(cardId)
+  }, [])
+
   // Context menu handlers
   const handleContextDelete = () => {
     if (contextMenu) {
@@ -452,7 +487,7 @@ export function InfiniteCanvas() {
           isLocked={contextMenu.isLocked}
         />
       )}
-      <SearchPanel />
+      <SearchPanel onNavigate={navigateToCard} />
       <Toolbar />
       <ZoomControl
         zoom={zoom}

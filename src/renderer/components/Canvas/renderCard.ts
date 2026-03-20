@@ -41,20 +41,23 @@ export function renderCard(
       fill: '#333',
       left: 10,
       top: 10,
-      editable: false
+      editable: false,
+      textDirection: 'ltr'
     })
     cardGroup.push(titleText)
   }
 
-  // Content
-  const displayContent = content || 'Double-click to edit'
+  // Content - strip HTML for display and use ltr direction
+  const plainText = content ? content.replace(/<[^>]*>/g, '') : ''
+  const displayContent = plainText || 'Double-click to edit'
   const contentText = new Textbox(displayContent, {
     width: size.width - 20,
     fontSize: 13,
     fill: content ? '#555' : '#999',
     left: 10,
     top: title ? 35 : 10,
-    editable: false
+    editable: false,
+    textDirection: 'ltr'
   })
   cardGroup.push(contentText)
 

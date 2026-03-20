@@ -3,7 +3,11 @@ import { useSearchStore } from '../../stores/searchStore'
 import { useElementsStore } from '../../stores/elementsStore'
 import { CardElement } from '../../types/card'
 
-export function SearchPanel() {
+interface SearchPanelProps {
+  onNavigate?: (cardId: string) => void
+}
+
+export function SearchPanel({ onNavigate }: SearchPanelProps) {
   const { isOpen, query, results, currentIndex, close, setQuery, nextResult, prevResult } = useSearchStore()
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -34,12 +38,22 @@ export function SearchPanel() {
     useSearchStore.getState().setResults(matchingCards.map((c) => c.id))
   }
 
+  const handleNavigate = () => {
+    if (results.length > 0 && currentIndex >= 0) {
+      const cardId = results[currentIndex]
+      if (onNavigate) {
+        onNavigate(cardId)
+      }
+    }
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       if (e.shiftKey) {
         prevResult()
       } else {
         nextResult()
+        handleNavigate()
       }
     }
     if (e.key === 'Escape') {

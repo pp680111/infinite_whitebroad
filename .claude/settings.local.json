@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(timeout 30 npm run:*)",
+      "Bash(npx tsc:*)",
+      "Bash(timeout 25 npm run:*)",
+      "Bash(npm run:*)",
+      "Bash(npx:*)",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "Bash(curl:*)",
+      "mcp__plugin_playwright_playwright__browser_console_messages",
+      "mcp__plugin_playwright_playwright__browser_take_screenshot",
+      "mcp__plugin_playwright_playwright__browser_close",
+      "mcp__plugin_playwright_playwright__browser_click",
+      "mcp__plugin_playwright_playwright__browser_snapshot"
+    ]
+  }
+}
