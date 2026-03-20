@@ -8,7 +8,8 @@ export function renderCard(
     title?: string
     content: string
     locked: boolean
-  }
+  },
+  options?: { isEditing?: boolean }
 ): FabricObject {
   const { id, position, size, title, content } = card
 
@@ -41,7 +42,7 @@ export function renderCard(
       fill: '#333',
       left: 10,
       top: 10,
-      editable: false,
+      editable: options?.isEditing ?? false,
       textDirection: 'ltr'
     })
     cardGroup.push(titleText)
@@ -56,7 +57,7 @@ export function renderCard(
     fill: content ? '#555' : '#999',
     left: 10,
     top: title ? 35 : 10,
-    editable: false,
+    editable: options?.isEditing ?? false,
     textDirection: 'ltr'
   })
   cardGroup.push(contentText)
@@ -74,7 +75,7 @@ export function renderCard(
     lockRotation: card.locked
   })
 
-  ;(group as any).data = { id, type: 'card' }
+  ;(group as any).data = { id, type: 'card', isEditing: options?.isEditing ?? false }
 
   return group
 }
