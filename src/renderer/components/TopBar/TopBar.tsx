@@ -8,6 +8,7 @@ export function TopBar() {
   const [isEditing, setIsEditing] = useState(false)
   const [editName, setEditName] = useState(documentName)
   const [showMenu, setShowMenu] = useState(false)
+  const [showSettingsTip, setShowSettingsTip] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
   // Close menu when clicking outside
@@ -74,6 +75,11 @@ export function TopBar() {
     } catch (e) {
       console.warn('Save as failed in browser mode')
     }
+  }
+
+  const handleSettingsClick = () => {
+    setShowSettingsTip(true)
+    setTimeout(() => setShowSettingsTip(false), 2000)
   }
 
   return (
@@ -153,12 +159,20 @@ export function TopBar() {
         >
           🔍
         </button>
-        <button
-          className="w-8 h-8 flex items-center justify-center hover:bg-gray-100 rounded-lg text-sm"
-          title="设置"
-        >
-          ⚙
-        </button>
+        <div className="relative">
+          <button
+            onClick={handleSettingsClick}
+            className="w-8 h-8 flex items-center justify-center hover:bg-gray-100 rounded-lg text-sm"
+            title="设置"
+          >
+            ⚙
+          </button>
+          {showSettingsTip && (
+            <div className="absolute top-full right-0 mt-1 px-3 py-2 bg-gray-800 text-white text-xs rounded-lg shadow-lg whitespace-nowrap z-50">
+              尚未实现
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
