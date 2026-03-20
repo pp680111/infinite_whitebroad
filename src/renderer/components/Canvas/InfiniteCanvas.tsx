@@ -410,6 +410,7 @@ export function InfiniteCanvas() {
 
   // Menu event handlers
   useEffect(() => {
+    if (!window.electronAPI) return
     window.electronAPI.onMenuNew(() => newDocument())
     window.electronAPI.onMenuOpen(() => loadDocument())
     window.electronAPI.onMenuSave(() => saveDocument())
