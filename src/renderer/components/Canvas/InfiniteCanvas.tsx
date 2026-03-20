@@ -18,6 +18,8 @@ export function InfiniteCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<FabricCanvas | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const menuHandlersRef = useRef<Record<string, () => void>>({})
+  const menuHandlersRegisteredRef = useRef(false)
   const [zoom, setZoom] = useState(100)
   const [editingCard, setEditingCard] = useState<{
     id: string
@@ -446,15 +448,34 @@ export function InfiniteCanvas() {
   // Menu event handlers
   useEffect(() => {
     if (!window.electronAPI) return
-    window.electronAPI.onMenuNew(() => newDocument())
-    window.electronAPI.onMenuOpen(() => loadDocument())
-    window.electronAPI.onMenuSave(() => saveDocument())
-    window.electronAPI.onMenuSaveAs(() => saveDocumentAs())
-    window.electronAPI.onMenuSearch(() => useSearchStore.getState().open())
-    window.electronAPI.onMenuZoomIn(() => zoomIn())
-    window.electronAPI.onMenuZoomOut(() => zoomOut())
-    window.electronAPI.onMenuZoomReset(() => resetZoom())
-  }, [newDocument, loadDocument, saveDocument, saveDocumentAs, zoomIn, zoomOut, resetZoom])
+
+    // Prevent duplicate registration (React StrictMode may double-mount)
+    if (menuHandlersRegisteredRef.current) return
+    menuHandlersRegisteredRef.current = true
+
+    // Store handlers in ref so we can call the latest versions
+    menuHandlersRef.current = {
+      new: () => newDocument(),
+      open: () => loadDocument(),
+      save: () => saveDocument(),
+      saveAs: () => saveDocumentAs(),
+      search: () => useSearchStore.getState().open(),
+      zoomIn: () => zoomIn(),
+      zoomOut: () => zoomOut(),
+      zoomReset: () => resetZoom()
+    }
+
+    const handlers = menuHandlersRef.current
+    const api = window.electronAPI
+    api.onMenuNew(() => handlers.new())
+    api.onMenuOpen(() => handlers.open())
+    api.onMenuSave(() => handlers.save())
+    api.onMenuSaveAs(() => handlers.saveAs())
+    api.onMenuSearch(() => handlers.search())
+    api.onMenuZoomIn(() => handlers.zoomIn())
+    api.onMenuZoomOut(() => handlers.zoomOut())
+    api.onMenuZoomReset(() => handlers.zoomReset())
+  }, [])
 
   return (
     <div ref={containerRef} className="w-full h-full relative overflow-hidden">
