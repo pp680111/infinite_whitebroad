@@ -180,8 +180,18 @@ export function InfiniteCanvas() {
           const objects = canvas.getObjects()
           const cardGroup = objects.find((obj: any) => obj.data?.id === cardId && obj.data?.type === 'card')
           if (cardGroup) {
+            // Clear any active selection to prevent interference
+            canvas.discardActiveObject()
+
+            // Bring to front so card is visible above overlapping cards
+            ;(cardGroup as any).bringToFront()
+
             const contentTextbox = (cardGroup as any).contentText
             if (contentTextbox) {
+              // Clear placeholder text if it matches
+              if (contentTextbox.text === 'Double-click to edit') {
+                contentTextbox.text = ''
+              }
               contentTextbox.enterEditing()
             }
           }
