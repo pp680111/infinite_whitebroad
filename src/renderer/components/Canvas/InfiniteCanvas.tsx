@@ -184,7 +184,7 @@ export function InfiniteCanvas() {
             canvas.discardActiveObject()
 
             // Bring to front so card is visible above overlapping cards
-            ;(cardGroup as any).bringToFront()
+            ;(canvas as any).bringToFront(cardGroup)
 
             const contentTextbox = (cardGroup as any).contentText
             if (contentTextbox) {
