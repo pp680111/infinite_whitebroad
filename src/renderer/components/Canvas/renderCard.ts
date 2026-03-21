@@ -14,6 +14,7 @@ export function renderCard(
   const { id, position, size, title, content } = card
 
   const cardGroup: FabricObject[] = []
+  let titleText: Textbox | undefined
 
   // Card background with shadow
   const bg = new Rect({
@@ -35,7 +36,7 @@ export function renderCard(
 
   // Title if present
   if (title) {
-    const titleText = new Textbox(title, {
+    titleText = new Textbox(title, {
       width: size.width - 20,
       fontSize: 14,
       fontWeight: 'bold',
@@ -76,6 +77,10 @@ export function renderCard(
   })
 
   ;(group as any).data = { id, type: 'card', isEditing: options?.isEditing ?? false }
+
+  // Store references to textboxes for later editing access
+  ;(group as any).titleText = titleText
+  ;(group as any).contentText = contentText
 
   return group
 }
