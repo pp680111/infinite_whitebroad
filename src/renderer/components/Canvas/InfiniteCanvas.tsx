@@ -7,7 +7,6 @@ import { useToolStore } from '../../stores/toolStore'
 import { useSearchStore } from '../../stores/searchStore'
 import { useHistoryStore } from '../../stores/historyStore'
 import { renderCard } from './renderCard'
-import { CardEditor } from '../CardEditor/CardEditor'
 import { Toolbar } from '../Toolbar/Toolbar'
 import { ContextMenu } from '../ContextMenu/ContextMenu'
 import { SearchPanel } from '../SearchPanel/SearchPanel'
@@ -21,12 +20,7 @@ export function InfiniteCanvas() {
   const menuHandlersRef = useRef<Record<string, () => void>>({})
   const menuHandlersRegisteredRef = useRef(false)
   const [zoom, setZoom] = useState(100)
-  const [editingCard, setEditingCard] = useState<{
-    id: string
-    title: string
-    content: string
-    position: { x: number; y: number; width: number; height: number }
-  } | null>(null)
+  const [isEditingCardId, setIsEditingCardId] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{
     x: number
     y: number
@@ -107,7 +101,7 @@ export function InfiniteCanvas() {
 
     elements.forEach((element) => {
       if (element.type === 'card') {
-        const obj = renderCard(element) as FabricObject
+        const obj = renderCard(element, { isEditing: element.id === isEditingCardId }) as FabricObject
         obj.set({
           left: element.position.x,
           top: element.position.y
@@ -148,7 +142,7 @@ export function InfiniteCanvas() {
     })
 
     canvas.renderAll()
-  }, [elements])
+  }, [elements, isEditingCardId])
 
   useEffect(() => {
     syncElementsToCanvas()
@@ -175,19 +169,22 @@ export function InfiniteCanvas() {
       if (target && (target as any).data?.type === 'card') {
         const cardEl = useElementsStore.getState().getElement((target as any).data.id) as CardElement
         if (cardEl && !cardEl.locked) {
-          const bound = target.getBoundingRect()
-          setEditingCard({
-            id: cardEl.id,
-            title: cardEl.title || '',
-            content: cardEl.content || '',
-            position: {
-              x: bound.left,
-              y: bound.top,
-              width: cardEl.size.width,
-              height: cardEl.size.height
+          const cardId = cardEl.id
+          setIsEditingCardId(cardId)
+          useElementsStore.getState().setEditingCard(cardId)
+
+          // Re-render card with editable: true
+          syncElementsToCanvas()
+
+          // Find the group and enter editing on the content Textbox
+          const objects = canvas.getObjects()
+          const cardGroup = objects.find((obj: any) => obj.data?.id === cardId && obj.data?.type === 'card')
+          if (cardGroup) {
+            const contentTextbox = (cardGroup as any).contentText
+            if (contentTextbox) {
+              contentTextbox.enterEditing()
             }
-          })
-          useElementsStore.getState().setEditingCard(cardEl.id)
+          }
         }
       } else if (!target) {
         const pointer = canvas.getPointer(opt.e)
@@ -201,7 +198,7 @@ export function InfiniteCanvas() {
 
     canvas.on('mouse:dblclick', handleDblClick)
     return () => { canvas.off('mouse:dblclick', handleDblClick) }
-  }, [currentTool, addCard, setTool])
+  }, [currentTool, addCard, setTool, syncElementsToCanvas])
 
   // Handle shape creation on click
   useEffect(() => {
@@ -302,23 +299,55 @@ export function InfiniteCanvas() {
   }, [])
 
   // Handle card save
-  const handleCardSave = useCallback((title: string, content: string) => {
-    if (editingCard) {
-      useElementsStore.getState().updateElement(editingCard.id, {
-        title,
-        content,
+  const saveEditingCard = useCallback((texts: { title?: string; content: string }) => {
+    if (isEditingCardId) {
+      useElementsStore.getState().updateElement(isEditingCardId, {
+        title: texts.title,
+        content: texts.content,
         updatedAt: new Date().toISOString()
       } as any)
-      setEditingCard(null)
+      setIsEditingCardId(null)
       useElementsStore.getState().setEditingCard(null)
       useCanvasStore.getState().setDirty(true)
+      syncElementsToCanvas()
     }
-  }, [editingCard])
+  }, [isEditingCardId, syncElementsToCanvas])
 
-  const handleCardCancel = useCallback(() => {
-    setEditingCard(null)
+  const cancelEditingCard = useCallback(() => {
+    setIsEditingCardId(null)
     useElementsStore.getState().setEditingCard(null)
-  }, [])
+    syncElementsToCanvas()
+  }, [syncElementsToCanvas])
+
+  // Handle text editing completion
+  useEffect(() => {
+    const canvas = fabricRef.current
+    if (!canvas) return
+
+    const handleEditingExited = (e: { target?: FabricObject }) => {
+      if (!isEditingCardId) return
+      const target = e.target as any
+      if (!target || target.type !== 'textbox') return
+
+      const objects = canvas.getObjects()
+      const cardGroup = objects.find((obj: any) =>
+        obj.data?.id === isEditingCardId &&
+        obj.data?.type === 'card'
+      )
+      if (!cardGroup) return
+
+      const titleTextbox = (cardGroup as any).titleText
+      const contentTextbox = (cardGroup as any).contentText
+
+      const title = titleTextbox?.text || ''
+      const content = contentTextbox?.text || ''
+
+      saveEditingCard({ title, content })
+    }
+
+    ;(canvas.on as any)('editing:exited', handleEditingExited)
+    return () => { ;(canvas.off as any)('editing:exited', handleEditingExited) }
+  }, [isEditingCardId, saveEditingCard])
 
   // Navigate canvas to show a specific card
   const navigateToCard = useCallback((cardId: string) => {
@@ -329,7 +358,7 @@ export function InfiniteCanvas() {
     if (!card) return
 
     // Exit editing mode if active
-    setEditingCard(null)
+    setIsEditingCardId(null)
     useElementsStore.getState().setEditingCard(null)
 
     // Calculate center of the card in world coordinates
@@ -400,10 +429,9 @@ export function InfiniteCanvas() {
       }
       if (e.key === 'Escape') {
         useSearchStore.getState().close()
-        setEditingCard(null)
-        useElementsStore.getState().setEditingCard(null)
+        cancelEditingCard()
       }
-      if (e.key === 'Delete' && !editingCard) {
+      if (e.key === 'Delete' && !isEditingCardId) {
         const selectedId = useElementsStore.getState().selectedId
         if (selectedId) {
           useElementsStore.getState().removeElement(selectedId)
@@ -443,7 +471,7 @@ export function InfiniteCanvas() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [editingCard])
+  }, [isEditingCardId, cancelEditingCard])
 
   // Menu event handlers
   useEffect(() => {
@@ -486,15 +514,6 @@ export function InfiniteCanvas() {
       <div className="canvas-container absolute inset-0 pt-12">
         <canvas ref={canvasRef} />
       </div>
-      {editingCard && (
-        <CardEditor
-          initialTitle={editingCard.title}
-          initialContent={editingCard.content}
-          position={editingCard.position}
-          onSave={handleCardSave}
-          onCancel={handleCardCancel}
-        />
-      )}
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}
