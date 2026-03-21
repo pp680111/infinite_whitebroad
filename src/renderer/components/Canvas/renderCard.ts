@@ -1,4 +1,10 @@
-import { FabricObject, Rect, Textbox, Group, Shadow } from 'fabric'
+import { Rect, Textbox, Shadow } from 'fabric'
+
+export interface CardRenderResult {
+  cardObject: Rect
+  titleText: Textbox | undefined
+  contentText: Textbox
+}
 
 export function renderCard(
   card: {
@@ -10,13 +16,10 @@ export function renderCard(
     locked: boolean
   },
   options?: { isEditing?: boolean }
-): FabricObject {
+): CardRenderResult {
   const { id, position, size, title, content } = card
 
-  const cardGroup: FabricObject[] = []
-  let titleText: Textbox | undefined
-
-  // Card background with shadow
+  // Card background with shadow - standalone rect, not a group
   const bg = new Rect({
     width: size.width,
     height: size.height,
@@ -30,40 +33,7 @@ export function renderCard(
       blur: 10,
       offsetX: 2,
       offsetY: 2
-    })
-  })
-  cardGroup.push(bg)
-
-  // Title if present
-  if (title) {
-    titleText = new Textbox(title, {
-      width: size.width - 20,
-      fontSize: 14,
-      fontWeight: 'bold',
-      fill: '#333',
-      left: 10,
-      top: 10,
-      editable: options?.isEditing ?? false,
-      textDirection: 'ltr'
-    })
-    cardGroup.push(titleText)
-  }
-
-  // Content - strip HTML for display and use ltr direction
-  const plainText = content ? content.replace(/<[^>]*>/g, '') : ''
-  const displayContent = plainText || 'Double-click to edit'
-  const contentText = new Textbox(displayContent, {
-    width: size.width - 20,
-    fontSize: 13,
-    fill: content ? '#555' : '#999',
-    left: 10,
-    top: title ? 35 : 10,
-    editable: options?.isEditing ?? false,
-    textDirection: 'ltr'
-  })
-  cardGroup.push(contentText)
-
-  const group = new Group(cardGroup, {
+    }),
     left: position.x,
     top: position.y,
     selectable: !card.locked,
@@ -75,12 +45,56 @@ export function renderCard(
     lockScalingY: card.locked,
     lockRotation: card.locked
   })
+  ;(bg as any).data = { id, type: 'card', isEditing: options?.isEditing ?? false }
 
-  ;(group as any).data = { id, type: 'card', isEditing: options?.isEditing ?? false }
+  // Title if present - independent object that won't scale with the card
+  let titleText: Textbox | undefined
+  if (title) {
+    titleText = new Textbox(title, {
+      width: size.width - 20,
+      fontSize: 14,
+      fontWeight: 'bold',
+      fill: '#333',
+      left: position.x + 10,
+      top: position.y + 10,
+      editable: options?.isEditing ?? false,
+      textDirection: 'ltr',
+      selectable: !card.locked,
+      evented: !card.locked,
+      lockMovementX: true,
+      lockMovementY: true,
+      lockScalingX: true,
+      lockScalingY: true,
+      lockRotation: true
+    })
+    ;(titleText as any).data = { cardId: id, isTitle: true }
+  }
 
-  // Store references to textboxes for later editing access
-  ;(group as any).titleText = titleText
-  ;(group as any).contentText = contentText
+  // Content - strip HTML for display and use ltr direction
+  // Independent object that won't scale with the card
+  const plainText = content ? content.replace(/<[^>]*>/g, '') : ''
+  const displayContent = plainText || 'Double-click to edit'
+  const contentText = new Textbox(displayContent, {
+    width: size.width - 20,
+    fontSize: 13,
+    fill: content ? '#555' : '#999',
+    left: position.x + 10,
+    top: position.y + (title ? 35 : 10),
+    editable: options?.isEditing ?? false,
+    textDirection: 'ltr',
+    selectable: !card.locked,
+    evented: !card.locked,
+    lockMovementX: true,
+    lockMovementY: true,
+    lockScalingX: true,
+    lockScalingY: true,
+    lockRotation: true
+  })
+  ;(contentText as any).data = { cardId: id, isContent: true }
 
-  return group
+  return {
+    cardObject: bg,
+    titleText,
+    contentText
+  }
 }

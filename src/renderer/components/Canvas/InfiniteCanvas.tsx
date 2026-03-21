@@ -6,7 +6,7 @@ import { useCanvasStore } from '../../stores/canvasStore'
 import { useToolStore } from '../../stores/toolStore'
 import { useSearchStore } from '../../stores/searchStore'
 import { useHistoryStore } from '../../stores/historyStore'
-import { renderCard } from './renderCard'
+import { renderCard, CardRenderResult } from './renderCard'
 import { Toolbar } from '../Toolbar/Toolbar'
 import { ContextMenu } from '../ContextMenu/ContextMenu'
 import { SearchPanel } from '../SearchPanel/SearchPanel'
@@ -102,15 +102,15 @@ export function InfiniteCanvas() {
 
     elements.forEach((element) => {
       if (element.type === 'card') {
-        const obj = renderCard(element, { isEditing: element.id === isEditingCardId }) as FabricObject
-        obj.set({
-          left: element.position.x,
-          top: element.position.y
-        })
-        ;(obj as any).data = { id: element.id, type: 'card' }
-        obj.selectable = !element.locked
-        obj.evented = !element.locked
-        canvas.add(obj)
+        const { cardObject, titleText, contentText } = renderCard(element, { isEditing: element.id === isEditingCardId }) as CardRenderResult
+        // Add card background
+        canvas.add(cardObject)
+        // Add title if present
+        if (titleText) {
+          canvas.add(titleText)
+        }
+        // Add content text
+        canvas.add(contentText)
       } else if (element.type === 'rectangle') {
         const rect = new Rect({
           left: element.position.x,
@@ -190,9 +190,39 @@ export function InfiniteCanvas() {
         })
       }
 
+      // Find the textboxes for this card on the canvas
+      const allObjects = canvas.getObjects()
+      let titleText: any = undefined
+      let contentText: any = undefined
+      for (const obj of allObjects) {
+        const o = obj as any
+        if (o.data?.cardId === cardId) {
+          if (o.data?.isTitle) {
+            titleText = o
+          } else if (o.data?.isContent) {
+            contentText = o
+          }
+        }
+      }
+
+      // Move textboxes with the card
+      const cardLeft = target.left
+      const cardTop = target.top
+      const cardWidth = target.width
+      if (titleText) {
+        titleText.set({
+          left: cardLeft + 10,
+          top: cardTop + 10
+        })
+      }
+      if (contentText) {
+        contentText.set({
+          left: cardLeft + 10,
+          top: cardTop + (titleText ? 35 : 10)
+        })
+      }
+
       // Sync content from textboxes
-      const titleText = target.titleText
-      const contentText = target.contentText
       const title = titleText?.text || ''
       const content = contentText?.text || ''
 
@@ -245,16 +275,26 @@ export function InfiniteCanvas() {
           setIsEditingCardId(cardId)
           useElementsStore.getState().setEditingCard(cardId)
 
-          // Find the existing card group and enable editing on its textboxes
+          // Find the existing card's textboxes
           const objects = canvas.getObjects()
-          const cardGroup = objects.find((obj: any) => obj.data?.id === cardId && obj.data?.type === 'card')
-          if (cardGroup) {
+          let titleText: any = undefined
+          let contentText: any = undefined
+          for (const obj of objects) {
+            const o = obj as any
+            if (o.data?.cardId === cardId) {
+              if (o.data?.isTitle) {
+                titleText = o
+              } else if (o.data?.isContent) {
+                contentText = o
+              }
+            }
+          }
+
+          if (titleText || contentText) {
             // Clear any active selection to prevent interference
             canvas.discardActiveObject()
 
             // Enable editing on the textboxes without re-rendering
-            const titleText = (cardGroup as any).titleText
-            const contentText = (cardGroup as any).contentText
             if (titleText) {
               ;(titleText as any).editable = true
               titleText.enterEditing()
@@ -282,13 +322,20 @@ export function InfiniteCanvas() {
         const editingCardId = isEditingCardIdRef.current
         if (editingCardId) {
           const objects = canvas.getObjects()
-          const cardGroup = objects.find((obj: any) =>
-            obj.data?.id === editingCardId &&
-            obj.data?.type === 'card'
-          )
-          if (cardGroup) {
-            const titleTextbox = (cardGroup as any).titleText
-            const contentTextbox = (cardGroup as any).contentText
+          let titleTextbox: any = undefined
+          let contentTextbox: any = undefined
+          for (const obj of objects) {
+            const o = obj as any
+            if (o.data?.cardId === editingCardId) {
+              if (o.data?.isTitle) {
+                titleTextbox = o
+              } else if (o.data?.isContent) {
+                contentTextbox = o
+              }
+            }
+          }
+
+          if (titleTextbox || contentTextbox) {
             const title = titleTextbox?.text || ''
             const content = contentTextbox?.text || ''
 
@@ -300,13 +347,11 @@ export function InfiniteCanvas() {
             } as any)
 
             // Disable editing on the textboxes
-            const titleText = (cardGroup as any).titleText
-            const contentText = (cardGroup as any).contentText
-            if (titleText) {
-              ;(titleText as any).editable = false
+            if (titleTextbox) {
+              ;(titleTextbox as any).editable = false
             }
-            if (contentText) {
-              ;(contentText as any).editable = false
+            if (contentTextbox) {
+              ;(contentTextbox as any).editable = false
             }
 
             setIsEditingCardId(null)
@@ -439,15 +484,13 @@ export function InfiniteCanvas() {
       // Disable editing on the textboxes without re-rendering
       const canvas = fabricRef.current
       if (canvas) {
-        const cardGroup = canvas.getObjects().find((obj: any) => obj.data?.id === isEditingCardId && obj.data?.type === 'card')
-        if (cardGroup) {
-          const titleText = (cardGroup as any).titleText
-          const contentText = (cardGroup as any).contentText
-          if (titleText) {
-            ;(titleText as any).editable = false
-          }
-          if (contentText) {
-            ;(contentText as any).editable = false
+        const objects = canvas.getObjects()
+        for (const obj of objects) {
+          const o = obj as any
+          if (o.data?.cardId === isEditingCardId) {
+            if (o.data?.isTitle || o.data?.isContent) {
+              ;(o as any).editable = false
+            }
           }
         }
       }
@@ -462,15 +505,13 @@ export function InfiniteCanvas() {
     // Disable editing on the textboxes without re-rendering
     const canvas = fabricRef.current
     if (canvas) {
-      const cardGroup = canvas.getObjects().find((obj: any) => obj.data?.id === isEditingCardId && obj.data?.type === 'card')
-      if (cardGroup) {
-        const titleText = (cardGroup as any).titleText
-        const contentText = (cardGroup as any).contentText
-        if (titleText) {
-          ;(titleText as any).editable = false
-        }
-        if (contentText) {
-          ;(contentText as any).editable = false
+      const objects = canvas.getObjects()
+      for (const obj of objects) {
+        const o = obj as any
+        if (o.data?.cardId === isEditingCardId) {
+          if (o.data?.isTitle || o.data?.isContent) {
+            ;(o as any).editable = false
+          }
         }
       }
     }
@@ -489,14 +530,20 @@ export function InfiniteCanvas() {
       if (!currentEditingId) return
 
       const objects = canvas.getObjects()
-      const cardGroup = objects.find((obj: any) =>
-        obj.data?.id === currentEditingId &&
-        obj.data?.type === 'card'
-      )
-      if (!cardGroup) return
+      let titleTextbox: any = undefined
+      let contentTextbox: any = undefined
+      for (const obj of objects) {
+        const o = obj as any
+        if (o.data?.cardId === currentEditingId) {
+          if (o.data?.isTitle) {
+            titleTextbox = o
+          } else if (o.data?.isContent) {
+            contentTextbox = o
+          }
+        }
+      }
 
-      const titleTextbox = (cardGroup as any).titleText
-      const contentTextbox = (cardGroup as any).contentText
+      if (!titleTextbox && !contentTextbox) return
 
       const title = titleTextbox?.text || ''
       const content = contentTextbox?.text || ''
@@ -538,16 +585,22 @@ export function InfiniteCanvas() {
       // Don't interfere with text editing clicks on the editing card's textboxes
       if (target && (target.type === 'textbox' || target.type === 'i-text')) return
 
-      // Find the editing card group
+      // Find the editing card's textboxes
       const objects = canvas.getObjects()
-      const cardGroup = objects.find((obj: any) =>
-        obj.data?.id === currentEditingId &&
-        obj.data?.type === 'card'
-      )
-      if (!cardGroup) return
+      let titleTextbox: any = undefined
+      let contentTextbox: any = undefined
+      for (const obj of objects) {
+        const o = obj as any
+        if (o.data?.cardId === currentEditingId) {
+          if (o.data?.isTitle) {
+            titleTextbox = o
+          } else if (o.data?.isContent) {
+            contentTextbox = o
+          }
+        }
+      }
 
-      const titleTextbox = (cardGroup as any).titleText
-      const contentTextbox = (cardGroup as any).contentText
+      if (!titleTextbox && !contentTextbox) return
 
       // Get the current text from textboxes
       const title = titleTextbox?.text || ''
