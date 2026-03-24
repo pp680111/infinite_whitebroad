@@ -389,12 +389,8 @@ export function InfiniteCanvas() {
 
     const handleDblClick = (opt: { e: TPointerEvent; target?: FabricObject }) => {
       if (currentTool === 'card') {
-        const pointer = canvas.getPointer(opt.e)
-        const worldPoint = {
-          x: (pointer.x - canvas.viewportTransform[4]) / canvas.getZoom(),
-          y: (pointer.y - canvas.viewportTransform[5]) / canvas.getZoom()
-        }
-        addCard(worldPoint.x, worldPoint.y)
+        const scenePoint = canvas.getScenePoint(opt.e)
+        addCard(scenePoint.x, scenePoint.y)
         setTool('select')
         return
       }
@@ -494,12 +490,8 @@ export function InfiniteCanvas() {
           }
         }
 
-        const pointer = canvas.getPointer(opt.e)
-        const worldPoint = {
-          x: (pointer.x - canvas.viewportTransform[4]) / canvas.getZoom(),
-          y: (pointer.y - canvas.viewportTransform[5]) / canvas.getZoom()
-        }
-        addCard(worldPoint.x, worldPoint.y)
+        const scenePoint = canvas.getScenePoint(opt.e)
+        addCard(scenePoint.x, scenePoint.y)
       }
     }
 
@@ -516,16 +508,12 @@ export function InfiniteCanvas() {
       if (currentTool === 'select') return
       if (opt.target) return
 
-      const pointer = canvas.getPointer(opt.e)
-      const worldPoint = {
-        x: (pointer.x - canvas.viewportTransform[4]) / canvas.getZoom(),
-        y: (pointer.y - canvas.viewportTransform[5]) / canvas.getZoom()
-      }
+      const scenePoint = canvas.getScenePoint(opt.e)
 
       if (currentTool === 'rectangle') {
         const id = useElementsStore.getState().addElement({
           type: 'rectangle',
-          position: worldPoint,
+          position: { x: scenePoint.x, y: scenePoint.y },
           size: { width: 100, height: 100 },
           strokeColor: '#333',
           strokeWidth: 2,
@@ -536,7 +524,7 @@ export function InfiniteCanvas() {
       } else if (currentTool === 'ellipse') {
         const id = useElementsStore.getState().addElement({
           type: 'ellipse',
-          position: worldPoint,
+          position: { x: scenePoint.x, y: scenePoint.y },
           size: { width: 100, height: 100 },
           strokeColor: '#333',
           strokeWidth: 2,
