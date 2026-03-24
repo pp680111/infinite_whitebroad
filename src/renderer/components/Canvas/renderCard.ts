@@ -18,6 +18,8 @@ export function renderCard(
   options?: { isEditing?: boolean }
 ): CardRenderResult {
   const { id, position, size, title, content } = card
+  const isEditing = options?.isEditing ?? false
+  const textInteractive = isEditing && !card.locked
 
   // Card background with shadow - standalone rect, not a group
   const bg = new Rect({
@@ -57,10 +59,10 @@ export function renderCard(
       fill: '#333',
       left: position.x + 10,
       top: position.y + 10,
-      editable: options?.isEditing ?? false,
+      editable: isEditing,
       textDirection: 'ltr',
-      selectable: !card.locked,
-      evented: !card.locked,
+      selectable: textInteractive,
+      evented: textInteractive,
       lockMovementX: true,
       lockMovementY: true,
       lockScalingX: true,
@@ -80,10 +82,10 @@ export function renderCard(
     fill: content ? '#555' : '#999',
     left: position.x + 10,
     top: position.y + (title ? 35 : 10),
-    editable: options?.isEditing ?? false,
+    editable: isEditing,
     textDirection: 'ltr',
-    selectable: !card.locked,
-    evented: !card.locked,
+    selectable: textInteractive,
+    evented: textInteractive,
     lockMovementX: true,
     lockMovementY: true,
     lockScalingX: true,

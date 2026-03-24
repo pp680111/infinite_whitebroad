@@ -31,6 +31,96 @@ export function InfiniteCanvas() {
   const elements = useElementsStore((s) => s.elements)
   const { currentTool, setTool } = useToolStore()
   const { addCard, saveDocument, newDocument, loadDocument, saveDocumentAs } = useCanvasStore()
+  const fitCardToText = useCallback((cardId: string) => {
+    const canvas = fabricRef.current
+    if (!canvas) return null
+
+    const objects = canvas.getObjects()
+    let cardObject: any = undefined
+    let titleText: any = undefined
+    let contentText: any = undefined
+
+    for (const obj of objects) {
+      const o = obj as any
+      if (o.data?.id === cardId && o.data?.type === 'card') {
+        cardObject = o
+      } else if (o.data?.cardId === cardId) {
+        if (o.data?.isTitle) {
+          titleText = o
+        } else if (o.data?.isContent) {
+          contentText = o
+        }
+      }
+    }
+
+    if (!cardObject || !contentText) return null
+
+    if (titleText?.initDimensions) titleText.initDimensions()
+    if (contentText?.initDimensions) contentText.initDimensions()
+
+    const minCardWidth = 200
+    const horizontalPadding = 20
+    const titleTextWidth = titleText
+      ? Math.max(
+          titleText.dynamicMinWidth || 0,
+          titleText.calcTextWidth ? titleText.calcTextWidth() : 0
+        )
+      : 0
+    const contentTextWidth = Math.max(
+      contentText.dynamicMinWidth || 0,
+      contentText.calcTextWidth ? contentText.calcTextWidth() : 0
+    )
+    const nextWidth = Math.max(
+      minCardWidth,
+      Math.ceil(Math.max(titleTextWidth, contentTextWidth) + horizontalPadding)
+    )
+    const textWidth = Math.max(nextWidth - horizontalPadding, 40)
+
+    if (titleText) {
+      titleText.set({ width: textWidth })
+      titleText.initDimensions?.()
+      titleText.setCoords()
+    }
+    contentText.set({ width: textWidth })
+    contentText.initDimensions?.()
+    contentText.setCoords()
+
+    const titleHeight = titleText ? titleText.height || 0 : 0
+    const contentHeight = contentText.height || 0
+    const nextHeight = Math.max(150, 30 + titleHeight + contentHeight + (titleText ? 25 : 0))
+
+    cardObject.set({
+      width: nextWidth,
+      height: nextHeight,
+      scaleX: 1,
+      scaleY: 1
+    })
+    cardObject.setCoords()
+
+    if (titleText) {
+      titleText.set({
+        left: cardObject.left + 10,
+        top: cardObject.top + 10
+      })
+      titleText.setCoords()
+    }
+    contentText.set({
+      left: cardObject.left + 10,
+      top: cardObject.top + (titleText ? 35 : 10)
+    })
+    contentText.setCoords()
+
+    canvas.requestRenderAll()
+
+    return {
+      title: titleText?.text || '',
+      content: contentText?.text || '',
+      size: {
+        width: nextWidth,
+        height: nextHeight
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (!canvasRef.current || fabricRef.current) return
@@ -39,7 +129,8 @@ export function InfiniteCanvas() {
       width: window.innerWidth,
       height: window.innerHeight,
       backgroundColor: '#f5f5f5',
-      selection: true
+      selection: true,
+      preserveObjectStacking: true
     })
     fabricRef.current = canvas
 
@@ -154,6 +245,71 @@ export function InfiniteCanvas() {
     const canvas = fabricRef.current
     if (!canvas) return
 
+    const getCardTextboxes = (cardId: string) => {
+      const allObjects = canvas.getObjects()
+      let titleText: any = undefined
+      let contentText: any = undefined
+
+      for (const obj of allObjects) {
+        const o = obj as any
+        if (o.data?.cardId === cardId) {
+          if (o.data?.isTitle) {
+            titleText = o
+          } else if (o.data?.isContent) {
+            contentText = o
+          }
+        }
+      }
+
+      return { titleText, contentText }
+    }
+
+    const syncCardTextboxes = (target: any) => {
+      if (!target?.data || target.data.type !== 'card') return null
+
+      const cardId = target.data.id
+      const { titleText, contentText } = getCardTextboxes(cardId)
+      const scaledWidth = target.width * (target.scaleX || 1)
+      const cardLeft = target.left
+      const cardTop = target.top
+
+      if (titleText) {
+        titleText.set({
+          left: cardLeft + 10,
+          top: cardTop + 10,
+          width: Math.max(scaledWidth - 20, 40)
+        })
+        titleText.setCoords()
+      }
+
+      if (contentText) {
+        contentText.set({
+          left: cardLeft + 10,
+          top: cardTop + (titleText ? 35 : 10),
+          width: Math.max(scaledWidth - 20, 40)
+        })
+        contentText.setCoords()
+      }
+
+      return { cardId, titleText, contentText }
+    }
+
+    const handleObjectMoving = (e: { target?: FabricObject }) => {
+      const target = e.target as any
+      const synced = syncCardTextboxes(target)
+      if (!synced) return
+
+      canvas.requestRenderAll()
+    }
+
+    const handleObjectScaling = (e: { target?: FabricObject }) => {
+      const target = e.target as any
+      const synced = syncCardTextboxes(target)
+      if (!synced) return
+
+      canvas.requestRenderAll()
+    }
+
     const handleObjectModified = (e: { target?: FabricObject }) => {
       const target = e.target as any
       if (!target || !target.data || target.data.type !== 'card') return
@@ -190,37 +346,9 @@ export function InfiniteCanvas() {
         })
       }
 
-      // Find the textboxes for this card on the canvas
-      const allObjects = canvas.getObjects()
-      let titleText: any = undefined
-      let contentText: any = undefined
-      for (const obj of allObjects) {
-        const o = obj as any
-        if (o.data?.cardId === cardId) {
-          if (o.data?.isTitle) {
-            titleText = o
-          } else if (o.data?.isContent) {
-            contentText = o
-          }
-        }
-      }
-
-      // Move textboxes with the card
-      const cardLeft = target.left
-      const cardTop = target.top
-      const cardWidth = target.width
-      if (titleText) {
-        titleText.set({
-          left: cardLeft + 10,
-          top: cardTop + 10
-        })
-      }
-      if (contentText) {
-        contentText.set({
-          left: cardLeft + 10,
-          top: cardTop + (titleText ? 35 : 10)
-        })
-      }
+      const synced = syncCardTextboxes(target)
+      const titleText = synced?.titleText
+      const contentText = synced?.contentText
 
       // Sync content from textboxes
       const title = titleText?.text || ''
@@ -239,8 +367,12 @@ export function InfiniteCanvas() {
       }
     }
 
+    canvas.on('object:moving', handleObjectMoving)
+    canvas.on('object:scaling', handleObjectScaling)
     canvas.on('object:modified', handleObjectModified)
     return () => {
+      canvas.off('object:moving', handleObjectMoving)
+      canvas.off('object:scaling', handleObjectScaling)
       canvas.off('object:modified', handleObjectModified)
     }
   }, [])
@@ -336,13 +468,15 @@ export function InfiniteCanvas() {
           }
 
           if (titleTextbox || contentTextbox) {
-            const title = titleTextbox?.text || ''
-            const content = contentTextbox?.text || ''
+            const fitted = fitCardToText(editingCardId)
+            const title = fitted ? fitted.title : (titleTextbox?.text || '')
+            const content = fitted ? fitted.content : (contentTextbox?.text || '')
 
             // Save to store
             useElementsStore.getState().updateElement(editingCardId, {
               title,
               content,
+              ...(fitted ? { size: fitted.size } : {}),
               updatedAt: new Date().toISOString()
             } as any)
 
@@ -474,10 +608,13 @@ export function InfiniteCanvas() {
   // Handle card save
   const saveEditingCard = useCallback((texts: { title?: string; content: string }) => {
     if (isEditingCardId) {
+      const fitted = fitCardToText(isEditingCardId)
+
       // Save text content to store
       useElementsStore.getState().updateElement(isEditingCardId, {
-        title: texts.title,
-        content: texts.content,
+        title: fitted ? fitted.title : texts.title,
+        content: fitted ? fitted.content : texts.content,
+        ...(fitted ? { size: fitted.size } : {}),
         updatedAt: new Date().toISOString()
       } as any)
 
@@ -499,7 +636,7 @@ export function InfiniteCanvas() {
       useElementsStore.getState().setEditingCard(null)
       useCanvasStore.getState().setDirty(true)
     }
-  }, [isEditingCardId])
+  }, [fitCardToText, isEditingCardId])
 
   const cancelEditingCard = useCallback(() => {
     // Disable editing on the textboxes without re-rendering
@@ -525,6 +662,17 @@ export function InfiniteCanvas() {
     const canvas = fabricRef.current
     if (!canvas) return
 
+    const handleTextChanged = (e: { target?: FabricObject }) => {
+      const target = e.target as any
+      const cardId = target?.data?.cardId
+      if (!cardId) return
+
+      const fitted = fitCardToText(cardId)
+      if (!fitted) return
+
+      useCanvasStore.getState().setDirty(true)
+    }
+
     const handleEditingExited = () => {
       const currentEditingId = isEditingCardIdRef.current
       if (!currentEditingId) return
@@ -545,13 +693,15 @@ export function InfiniteCanvas() {
 
       if (!titleTextbox && !contentTextbox) return
 
-      const title = titleTextbox?.text || ''
-      const content = contentTextbox?.text || ''
+      const fitted = fitCardToText(currentEditingId)
+      const title = fitted ? fitted.title : (titleTextbox?.text || '')
+      const content = fitted ? fitted.content : (contentTextbox?.text || '')
 
       // Always save when editing exits, regardless of what was clicked
       useElementsStore.getState().updateElement(currentEditingId, {
         title,
         content,
+        ...(fitted ? { size: fitted.size } : {}),
         updatedAt: new Date().toISOString()
       } as any)
 
@@ -603,13 +753,15 @@ export function InfiniteCanvas() {
       if (!titleTextbox && !contentTextbox) return
 
       // Get the current text from textboxes
-      const title = titleTextbox?.text || ''
-      const content = contentTextbox?.text || ''
+      const fitted = fitCardToText(currentEditingId)
+      const title = fitted ? fitted.title : (titleTextbox?.text || '')
+      const content = fitted ? fitted.content : (contentTextbox?.text || '')
 
       // Save content to store
       useElementsStore.getState().updateElement(currentEditingId, {
         title,
         content,
+        ...(fitted ? { size: fitted.size } : {}),
         updatedAt: new Date().toISOString()
       } as any)
       useCanvasStore.getState().setDirty(true)
@@ -627,13 +779,15 @@ export function InfiniteCanvas() {
       useElementsStore.getState().setEditingCard(null)
     }
 
+    ;(canvas.on as any)('text:changed', handleTextChanged)
     ;(canvas.on as any)('textbox:editing:exited', handleEditingExited)
     ;(canvas.on as any)('mouse:down', handleMouseDown)
     return () => {
+      ;(canvas.off as any)('text:changed', handleTextChanged)
       ;(canvas.off as any)('textbox:editing:exited', handleEditingExited)
       ;(canvas.off as any)('mouse:down', handleMouseDown)
     }
-  }, [isEditingCardId, saveEditingCard])
+  }, [fitCardToText, isEditingCardId, saveEditingCard])
 
   // Navigate canvas to show a specific card
   const navigateToCard = useCallback((cardId: string) => {
