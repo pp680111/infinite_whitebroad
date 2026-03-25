@@ -1,4 +1,6 @@
 import { useToolStore, ToolType } from '../../stores/toolStore'
+import { useElementsStore } from '../../stores/elementsStore'
+import { useCanvasStore } from '../../stores/canvasStore'
 
 interface ToolButton {
   type: ToolType
@@ -16,8 +18,22 @@ const tools: ToolButton[] = [
 
 export function Toolbar() {
   const { currentTool, setTool } = useToolStore()
+  const selectedId = useElementsStore((s) => s.selectedId)
+  const editingCardId = useElementsStore((s) => s.editingCardId)
+  const addImageToCard = useElementsStore((s) => s.addImageToCard)
+  const getElement = useElementsStore((s) => s.getElement)
+  const setDirty = useCanvasStore((s) => s.setDirty)
 
   const handleImageClick = async () => {
+    const activeCardId = editingCardId
+      ?? (selectedId && getElement(selectedId)?.type === 'card' ? selectedId : null)
+
+    if (!activeCardId) {
+      window.alert('请先选中或编辑一张卡片，再插入图片。')
+      setTool('select')
+      return
+    }
+
     setTool('image')
     const input = document.createElement('input')
     input.type = 'file'
@@ -27,7 +43,11 @@ export function Toolbar() {
       if (file) {
         const reader = new FileReader()
         reader.onload = () => {
-          // TODO: Implement image addition to canvas
+          const src = typeof reader.result === 'string' ? reader.result : ''
+          if (src) {
+            addImageToCard(activeCardId, src)
+            setDirty(true)
+          }
           setTool('select')
         }
         reader.readAsDataURL(file)

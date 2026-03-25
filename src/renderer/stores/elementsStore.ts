@@ -19,6 +19,8 @@ interface ElementsState {
   duplicateElement: (id: string) => string | null
   lockElement: (id: string) => void
   unlockElement: (id: string) => void
+  addImageToCard: (cardId: string, src: string) => void
+  removeImageFromCard: (cardId: string, imageId: string) => void
   clear: () => void
 }
 
@@ -109,6 +111,39 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
       elements: state.elements.map((el) =>
         el.id === id ? { ...el, locked: false } as CanvasElement : el
       )
+    }))
+  },
+
+  addImageToCard: (cardId, src) => {
+    set((state) => ({
+      elements: state.elements.map((el) => {
+        if (el.id !== cardId || el.type !== 'card') return el
+        return {
+          ...el,
+          images: [
+            ...el.images,
+            {
+              id: uuidv4(),
+              src,
+              position: 'bottom'
+            }
+          ],
+          updatedAt: new Date().toISOString()
+        }
+      })
+    }))
+  },
+
+  removeImageFromCard: (cardId, imageId) => {
+    set((state) => ({
+      elements: state.elements.map((el) => {
+        if (el.id !== cardId || el.type !== 'card') return el
+        return {
+          ...el,
+          images: el.images.filter((image) => image.id !== imageId),
+          updatedAt: new Date().toISOString()
+        }
+      })
     }))
   },
 

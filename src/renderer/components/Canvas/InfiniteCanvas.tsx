@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Canvas as FabricCanvas, TPointerEvent, FabricObject, Rect, Ellipse } from 'fabric'
+import { Canvas as FabricCanvas, TPointerEvent, FabricObject, Rect, Ellipse, FabricImage, Textbox } from 'fabric'
 import { useCanvasControls } from './useCanvasControls'
 import { useElementsStore } from '../../stores/elementsStore'
 import { useCanvasStore } from '../../stores/canvasStore'
@@ -19,6 +19,8 @@ export function InfiniteCanvas() {
   const containerRef = useRef<HTMLDivElement>(null)
   const menuHandlersRef = useRef<Record<string, () => void>>({})
   const menuHandlersRegisteredRef = useRef(false)
+  const renderVersionRef = useRef(0)
+  const ignoreNextEditMouseDownRef = useRef(false)
   const [zoom, setZoom] = useState(100)
   const [isEditingCardId, setIsEditingCardId] = useState<string | null>(null)
   const isEditingCardIdRef = useRef<string | null>(null)
@@ -31,7 +33,9 @@ export function InfiniteCanvas() {
   const elements = useElementsStore((s) => s.elements)
   const { currentTool, setTool } = useToolStore()
   const { addCard, saveDocument, newDocument, loadDocument, saveDocumentAs } = useCanvasStore()
-  const fitCardToText = useCallback((cardId: string) => {
+  const addImageToCard = useElementsStore((s) => s.addImageToCard)
+  const removeImageFromCard = useElementsStore((s) => s.removeImageFromCard)
+  const layoutCardObjects = useCallback((cardId: string, options?: { fitTextWidth?: boolean; resizeHeight?: boolean }) => {
     const canvas = fabricRef.current
     if (!canvas) return null
 
@@ -39,6 +43,8 @@ export function InfiniteCanvas() {
     let cardObject: any = undefined
     let titleText: any = undefined
     let contentText: any = undefined
+    const imageObjects: any[] = []
+    const imageDeleteButtons: any[] = []
 
     for (const obj of objects) {
       const o = obj as any
@@ -49,6 +55,10 @@ export function InfiniteCanvas() {
           titleText = o
         } else if (o.data?.isContent) {
           contentText = o
+        } else if (o.data?.isCardImage) {
+          imageObjects.push(o)
+        } else if (o.data?.isCardImageDelete) {
+          imageDeleteButtons.push(o)
         }
       }
     }
@@ -58,57 +68,95 @@ export function InfiniteCanvas() {
     if (titleText?.initDimensions) titleText.initDimensions()
     if (contentText?.initDimensions) contentText.initDimensions()
 
-    const minCardWidth = 200
-    const horizontalPadding = 20
-    const titleTextWidth = titleText
-      ? Math.max(
-          titleText.dynamicMinWidth || 0,
-          titleText.calcTextWidth ? titleText.calcTextWidth() : 0
-        )
-      : 0
-    const contentTextWidth = Math.max(
-      contentText.dynamicMinWidth || 0,
-      contentText.calcTextWidth ? contentText.calcTextWidth() : 0
-    )
-    const nextWidth = Math.max(
-      minCardWidth,
-      Math.ceil(Math.max(titleTextWidth, contentTextWidth) + horizontalPadding)
-    )
-    const textWidth = Math.max(nextWidth - horizontalPadding, 40)
+    if (options?.fitTextWidth) {
+      const minCardWidth = 200
+      const horizontalPadding = 20
+      const titleTextWidth = titleText
+        ? Math.max(
+            titleText.dynamicMinWidth || 0,
+            titleText.calcTextWidth ? titleText.calcTextWidth() : 0
+          )
+        : 0
+      const contentTextWidth = Math.max(
+        contentText.dynamicMinWidth || 0,
+        contentText.calcTextWidth ? contentText.calcTextWidth() : 0
+      )
+      const nextWidth = Math.max(
+        minCardWidth,
+        Math.ceil(Math.max(titleTextWidth, contentTextWidth) + horizontalPadding)
+      )
 
-    if (titleText) {
-      titleText.set({ width: textWidth })
-      titleText.initDimensions?.()
-      titleText.setCoords()
+      cardObject.set({
+        width: nextWidth,
+        scaleX: 1
+      })
+      cardObject.setCoords()
     }
-    contentText.set({ width: textWidth })
-    contentText.initDimensions?.()
-    contentText.setCoords()
 
-    const titleHeight = titleText ? titleText.height || 0 : 0
-    const contentHeight = contentText.height || 0
-    const nextHeight = Math.max(150, 30 + titleHeight + contentHeight + (titleText ? 25 : 0))
-
-    cardObject.set({
-      width: nextWidth,
-      height: nextHeight,
-      scaleX: 1,
-      scaleY: 1
-    })
-    cardObject.setCoords()
+    const cardLeft = cardObject.left
+    const cardTop = cardObject.top
+    const innerWidth = Math.max(cardObject.width * (cardObject.scaleX || 1) - 20, 40)
+    let currentTop = cardTop + 10
 
     if (titleText) {
       titleText.set({
-        left: cardObject.left + 10,
-        top: cardObject.top + 10
+        width: innerWidth,
+        left: cardLeft + 10,
+        top: currentTop
       })
+      titleText.initDimensions?.()
       titleText.setCoords()
+      currentTop += (titleText.height || 0) + 8
     }
+
     contentText.set({
-      left: cardObject.left + 10,
-      top: cardObject.top + (titleText ? 35 : 10)
+      width: innerWidth,
+      left: cardLeft + 10,
+      top: currentTop
     })
+    contentText.initDimensions?.()
     contentText.setCoords()
+    currentTop += contentText.height || 0
+
+    if (imageObjects.length > 0) {
+      currentTop += 12
+    }
+
+    const orderedImages = imageObjects.sort((a, b) => (a.data?.imageIndex || 0) - (b.data?.imageIndex || 0))
+    for (const imageObject of orderedImages) {
+      const originalWidth = imageObject.data?.naturalWidth || imageObject.width || innerWidth
+      const originalHeight = imageObject.data?.naturalHeight || imageObject.height || innerWidth
+      const scale = Math.min(1, innerWidth / originalWidth)
+      const renderHeight = originalHeight * scale
+
+      imageObject.set({
+        left: cardLeft + 10,
+        top: currentTop,
+        scaleX: scale,
+        scaleY: scale
+      })
+      imageObject.setCoords()
+
+       const deleteButton = imageDeleteButtons.find((button) => button.data?.imageId === imageObject.data?.imageId)
+       if (deleteButton) {
+        deleteButton.set({
+          left: cardLeft + 10 + innerWidth - 18,
+          top: currentTop + 6
+        })
+        deleteButton.setCoords()
+      }
+
+      currentTop += renderHeight + 8
+    }
+
+    const nextHeight = Math.max(150, currentTop - cardTop + 10 - (orderedImages.length > 0 ? 8 : 0))
+    if (options?.resizeHeight) {
+      cardObject.set({
+        height: nextHeight,
+        scaleY: 1
+      })
+      cardObject.setCoords()
+    }
 
     canvas.requestRenderAll()
 
@@ -116,11 +164,14 @@ export function InfiniteCanvas() {
       title: titleText?.text || '',
       content: contentText?.text || '',
       size: {
-        width: nextWidth,
-        height: nextHeight
+        width: cardObject.width * (cardObject.scaleX || 1),
+        height: options?.resizeHeight ? nextHeight : cardObject.height * (cardObject.scaleY || 1)
       }
     }
   }, [])
+  const fitCardToText = useCallback((cardId: string) => {
+    return layoutCardObjects(cardId, { fitTextWidth: true, resizeHeight: true })
+  }, [layoutCardObjects])
 
   useEffect(() => {
     if (!canvasRef.current || fabricRef.current) return
@@ -185,15 +236,18 @@ export function InfiniteCanvas() {
   }, [handleWheel, startPan, updatePan, endPan])
 
   // Sync elements to Fabric canvas
-  const syncElementsToCanvas = useCallback(() => {
+  const syncElementsToCanvas = useCallback(async () => {
     const canvas = fabricRef.current
     if (!canvas) return
 
+    const renderVersion = ++renderVersionRef.current
     canvas.clear()
+    const pendingImageLoads: Promise<void>[] = []
 
     elements.forEach((element) => {
       if (element.type === 'card') {
-        const { cardObject, titleText, contentText } = renderCard(element, { isEditing: element.id === isEditingCardId }) as CardRenderResult
+        const card = element as CardElement
+        const { cardObject, titleText, contentText } = renderCard(element, { isEditing: false }) as CardRenderResult
         // Add card background
         canvas.add(cardObject)
         // Add title if present
@@ -202,6 +256,41 @@ export function InfiniteCanvas() {
         }
         // Add content text
         canvas.add(contentText)
+
+        pendingImageLoads.push((async () => {
+          for (const [imageIndex, image] of card.images.entries()) {
+            try {
+              const imageObject = await FabricImage.fromURL(image.src)
+              if (renderVersion !== renderVersionRef.current) {
+                return
+              }
+
+              imageObject.set({
+                left: card.position.x + 10,
+                top: card.position.y + 10,
+                selectable: false,
+                evented: false,
+                hoverCursor: 'default'
+              })
+              ;(imageObject as any).data = {
+                cardId: card.id,
+                imageId: image.id,
+                imageIndex,
+                isCardImage: true,
+                naturalWidth: imageObject.width,
+                naturalHeight: imageObject.height
+              }
+              canvas.add(imageObject)
+
+            } catch (error) {
+              console.warn('Failed to load card image', error)
+            }
+          }
+
+          if (renderVersion === renderVersionRef.current) {
+            layoutCardObjects(card.id, { resizeHeight: false })
+          }
+        })())
       } else if (element.type === 'rectangle') {
         const rect = new Rect({
           left: element.position.x,
@@ -234,10 +323,14 @@ export function InfiniteCanvas() {
     })
 
     canvas.renderAll()
-  }, [elements])
+    await Promise.all(pendingImageLoads)
+    if (renderVersion === renderVersionRef.current) {
+      canvas.renderAll()
+    }
+  }, [elements, layoutCardObjects])
 
   useEffect(() => {
-    syncElementsToCanvas()
+    void syncElementsToCanvas()
   }, [syncElementsToCanvas])
 
   // Sync card state changes (position, size, content) to store
@@ -245,58 +338,11 @@ export function InfiniteCanvas() {
     const canvas = fabricRef.current
     if (!canvas) return
 
-    const getCardTextboxes = (cardId: string) => {
-      const allObjects = canvas.getObjects()
-      let titleText: any = undefined
-      let contentText: any = undefined
-
-      for (const obj of allObjects) {
-        const o = obj as any
-        if (o.data?.cardId === cardId) {
-          if (o.data?.isTitle) {
-            titleText = o
-          } else if (o.data?.isContent) {
-            contentText = o
-          }
-        }
-      }
-
-      return { titleText, contentText }
-    }
-
-    const syncCardTextboxes = (target: any) => {
-      if (!target?.data || target.data.type !== 'card') return null
-
-      const cardId = target.data.id
-      const { titleText, contentText } = getCardTextboxes(cardId)
-      const scaledWidth = target.width * (target.scaleX || 1)
-      const cardLeft = target.left
-      const cardTop = target.top
-
-      if (titleText) {
-        titleText.set({
-          left: cardLeft + 10,
-          top: cardTop + 10,
-          width: Math.max(scaledWidth - 20, 40)
-        })
-        titleText.setCoords()
-      }
-
-      if (contentText) {
-        contentText.set({
-          left: cardLeft + 10,
-          top: cardTop + (titleText ? 35 : 10),
-          width: Math.max(scaledWidth - 20, 40)
-        })
-        contentText.setCoords()
-      }
-
-      return { cardId, titleText, contentText }
-    }
-
     const handleObjectMoving = (e: { target?: FabricObject }) => {
       const target = e.target as any
-      const synced = syncCardTextboxes(target)
+      const synced = target?.data?.type === 'card'
+        ? layoutCardObjects(target.data.id, { resizeHeight: false })
+        : null
       if (!synced) return
 
       canvas.requestRenderAll()
@@ -304,7 +350,9 @@ export function InfiniteCanvas() {
 
     const handleObjectScaling = (e: { target?: FabricObject }) => {
       const target = e.target as any
-      const synced = syncCardTextboxes(target)
+      const synced = target?.data?.type === 'card'
+        ? layoutCardObjects(target.data.id, { resizeHeight: false })
+        : null
       if (!synced) return
 
       canvas.requestRenderAll()
@@ -346,13 +394,9 @@ export function InfiniteCanvas() {
         })
       }
 
-      const synced = syncCardTextboxes(target)
-      const titleText = synced?.titleText
-      const contentText = synced?.contentText
-
-      // Sync content from textboxes
-      const title = titleText?.text || ''
-      const content = contentText?.text || ''
+      const fitted = layoutCardObjects(cardId, { resizeHeight: false })
+      const title = fitted?.title || ''
+      const content = fitted?.content || ''
 
       if (currentElement.title !== title || currentElement.content !== content) {
         updates.title = title
@@ -381,6 +425,54 @@ export function InfiniteCanvas() {
   useEffect(() => {
     isEditingCardIdRef.current = isEditingCardId
   }, [isEditingCardId])
+
+  useEffect(() => {
+    const canvas = fabricRef.current
+    if (!canvas) return
+
+    const existingDeleteButtons = canvas.getObjects().filter((obj) => (obj as any).data?.isCardImageDelete)
+    existingDeleteButtons.forEach((obj) => canvas.remove(obj))
+
+    if (!isEditingCardId) {
+      canvas.requestRenderAll()
+      return
+    }
+
+    const imageObjects = canvas
+      .getObjects()
+      .filter((obj) => (obj as any).data?.cardId === isEditingCardId && (obj as any).data?.isCardImage)
+
+    imageObjects.forEach((imageObject) => {
+      const imageData = (imageObject as any).data
+      const deleteButton = new Textbox('×', {
+        width: 18,
+        height: 18,
+        fontSize: 14,
+        fontWeight: 'bold',
+        textAlign: 'center',
+        fill: '#ffffff',
+        backgroundColor: '#ef4444',
+        editable: false,
+        selectable: true,
+        evented: true,
+        hoverCursor: 'pointer',
+        lockMovementX: true,
+        lockMovementY: true,
+        lockScalingX: true,
+        lockScalingY: true,
+        lockRotation: true
+      })
+      ;(deleteButton as any).data = {
+        cardId: imageData.cardId,
+        imageId: imageData.imageId,
+        imageIndex: imageData.imageIndex,
+        isCardImageDelete: true
+      }
+      canvas.add(deleteButton)
+    })
+
+    layoutCardObjects(isEditingCardId, { resizeHeight: false })
+  }, [isEditingCardId, layoutCardObjects])
 
   // Double-click to edit or create card
   useEffect(() => {
@@ -421,10 +513,13 @@ export function InfiniteCanvas() {
           if (titleText || contentText) {
             // Clear any active selection to prevent interference
             canvas.discardActiveObject()
+            ignoreNextEditMouseDownRef.current = true
 
             // Enable editing on the textboxes without re-rendering
             if (titleText) {
               ;(titleText as any).editable = true
+              titleText.selectable = true
+              titleText.evented = true
               titleText.enterEditing()
               // Position cursor at end of text
               const titleLen = titleText.text?.length || 0
@@ -433,10 +528,13 @@ export function InfiniteCanvas() {
             }
             if (contentText) {
               ;(contentText as any).editable = true
+              contentText.selectable = true
+              contentText.evented = true
               // Clear placeholder text if it matches
               if (contentText.text === 'Double-click to edit') {
                 contentText.text = ''
               }
+              canvas.setActiveObject(contentText)
               contentText.enterEditing()
               // Position cursor at end of text
               const contentLen = contentText.text?.length || 0
@@ -479,9 +577,13 @@ export function InfiniteCanvas() {
             // Disable editing on the textboxes
             if (titleTextbox) {
               ;(titleTextbox as any).editable = false
+              titleTextbox.selectable = false
+              titleTextbox.evented = false
             }
             if (contentTextbox) {
               ;(contentTextbox as any).editable = false
+              contentTextbox.selectable = false
+              contentTextbox.evented = false
             }
 
             setIsEditingCardId(null)
@@ -573,6 +675,12 @@ export function InfiniteCanvas() {
 
     const onMouseDown = (opt: { e: TPointerEvent; target?: FabricObject }) => {
       const e = opt.e as unknown as MouseEvent
+      const target = opt.target as any
+      if (target?.data?.isCardImageDelete) {
+        removeImageFromCard(target.data.cardId, target.data.imageId)
+        useCanvasStore.getState().setDirty(true)
+        return
+      }
       if (e.button === 2) {
         if (!opt.target) return
         const id = (opt.target as any).data?.id
@@ -591,7 +699,7 @@ export function InfiniteCanvas() {
 
     canvas.on('mouse:down', onMouseDown as any)
     return () => { canvas.off('mouse:down', onMouseDown as any) }
-  }, [])
+  }, [removeImageFromCard])
 
   // Handle card save
   const saveEditingCard = useCallback((texts: { title?: string; content: string }) => {
@@ -612,12 +720,14 @@ export function InfiniteCanvas() {
         const objects = canvas.getObjects()
         for (const obj of objects) {
           const o = obj as any
-          if (o.data?.cardId === isEditingCardId) {
-            if (o.data?.isTitle || o.data?.isContent) {
-              ;(o as any).editable = false
+            if (o.data?.cardId === isEditingCardId) {
+              if (o.data?.isTitle || o.data?.isContent) {
+                ;(o as any).editable = false
+                o.selectable = false
+                o.evented = false
+              }
             }
           }
-        }
       }
 
       setIsEditingCardId(null)
@@ -636,6 +746,8 @@ export function InfiniteCanvas() {
         if (o.data?.cardId === isEditingCardId) {
           if (o.data?.isTitle || o.data?.isContent) {
             ;(o as any).editable = false
+            o.selectable = false
+            o.evented = false
           }
         }
       }
@@ -715,6 +827,11 @@ export function InfiniteCanvas() {
     }
 
     const handleMouseDown = (e: { target?: FabricObject; e: MouseEvent }) => {
+      if (ignoreNextEditMouseDownRef.current) {
+        ignoreNextEditMouseDownRef.current = false
+        return
+      }
+
       const currentEditingId = isEditingCardIdRef.current
       if (!currentEditingId) return
 
@@ -757,9 +874,13 @@ export function InfiniteCanvas() {
       // Exit editing mode on textboxes
       if (titleTextbox) {
         ;(titleTextbox as any).editable = false
+        titleTextbox.selectable = false
+        titleTextbox.evented = false
       }
       if (contentTextbox) {
         ;(contentTextbox as any).editable = false
+        contentTextbox.selectable = false
+        contentTextbox.evented = false
       }
 
       // Clear editing state
@@ -900,6 +1021,33 @@ export function InfiniteCanvas() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isEditingCardId, cancelEditingCard])
+
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const editingCardId = isEditingCardIdRef.current
+      if (!editingCardId || !e.clipboardData) return
+
+      const imageItem = Array.from(e.clipboardData.items).find((item) => item.type.startsWith('image/'))
+      if (!imageItem) return
+
+      const file = imageItem.getAsFile()
+      if (!file) return
+
+      e.preventDefault()
+      const reader = new FileReader()
+      reader.onload = () => {
+        const src = typeof reader.result === 'string' ? reader.result : ''
+        if (!src) return
+
+        addImageToCard(editingCardId, src)
+        useCanvasStore.getState().setDirty(true)
+      }
+      reader.readAsDataURL(file)
+    }
+
+    window.addEventListener('paste', handlePaste)
+    return () => window.removeEventListener('paste', handlePaste)
+  }, [addImageToCard])
 
   // Menu event handlers
   useEffect(() => {
