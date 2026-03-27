@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type ToolType = 'select' | 'rectangle' | 'ellipse' | 'image' | 'card'
+export type ToolType = 'none' | 'select' | 'image' | 'card'
 
 interface ToolState {
   currentTool: ToolType

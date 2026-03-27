@@ -10,8 +10,6 @@ interface ToolButton {
 
 const tools: ToolButton[] = [
   { type: 'select', icon: '⬚', label: '选择' },
-  { type: 'rectangle', icon: '▢', label: '矩形' },
-  { type: 'ellipse', icon: '◯', label: '椭圆' },
   { type: 'image', icon: '🖼', label: '图片' },
   { type: 'card', icon: '📝', label: '文本卡片' }
 ]
@@ -67,7 +65,11 @@ export function Toolbar() {
             if (tool.type === 'image') {
               handleImageClick()
             } else {
-              setTool(tool.type)
+              if (tool.type === 'select' && currentTool === 'select') {
+                setTool('none')
+              } else {
+                setTool(tool.type)
+              }
             }
           }}
           className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg transition-colors ${

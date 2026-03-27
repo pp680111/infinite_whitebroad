@@ -11,26 +11,6 @@ export interface CardElement {
   locked: boolean
 }
 
-export interface RectangleElement {
-  id: string
-  type: 'rectangle'
-  position: { x: number; y: number }
-  size: { width: number; height: number }
-  strokeColor: string
-  strokeWidth: number
-  locked: boolean
-}
-
-export interface EllipseElement {
-  id: string
-  type: 'ellipse'
-  position: { x: number; y: number }
-  size: { width: number; height: number }
-  strokeColor: string
-  strokeWidth: number
-  locked: boolean
-}
-
 export interface ImageElement {
   id: string
   type: 'image'
@@ -40,4 +20,4 @@ export interface ImageElement {
   locked: boolean
 }
 
-export type CanvasElement = CardElement | RectangleElement | EllipseElement | ImageElement
+export type CanvasElement = CardElement | ImageElement

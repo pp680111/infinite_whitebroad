@@ -11,7 +11,7 @@ interface UseCanvasControlsReturn {
   zoom: number
   isPanning: boolean
   handleWheel: (opt: TPointerEventInfo<TPointerEvent>) => void
-  startPan: (e: TPointerEvent) => void
+  startPan: (e: TPointerEvent, allowDirectPan?: boolean) => void
   updatePan: (e: TPointerEvent) => void
   endPan: () => void
   zoomIn: () => void
@@ -42,9 +42,11 @@ export function useCanvasControls(
     e.stopPropagation()
   }, [canvas, minZoom, maxZoom])
 
-  const startPan = useCallback((e: TPointerEvent) => {
-    if (!canvas || !spaceDownRef.current) return
+  const startPan = useCallback((e: TPointerEvent, allowDirectPan = false) => {
+    if (!canvas) return
     const mouseEvent = e as unknown as MouseEvent
+    const shouldPan = spaceDownRef.current || allowDirectPan
+    if (!shouldPan || mouseEvent.button !== 0) return
     canvas.selection = false
     canvas.defaultCursor = 'grabbing'
     lastPosRef.current = { x: mouseEvent.clientX, y: mouseEvent.clientY }

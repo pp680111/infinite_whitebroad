@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Canvas as FabricCanvas, TPointerEvent, FabricObject, Rect, Ellipse, FabricImage, Textbox } from 'fabric'
+import { Canvas as FabricCanvas, TPointerEvent, FabricObject, FabricImage, Textbox } from 'fabric'
 import { useCanvasControls } from './useCanvasControls'
 import { useElementsStore } from '../../stores/elementsStore'
 import { useCanvasStore } from '../../stores/canvasStore'
@@ -35,7 +35,11 @@ export function InfiniteCanvas() {
   const { addCard, saveDocument, newDocument, loadDocument, saveDocumentAs } = useCanvasStore()
   const addImageToCard = useElementsStore((s) => s.addImageToCard)
   const removeImageFromCard = useElementsStore((s) => s.removeImageFromCard)
-  const layoutCardObjects = useCallback((cardId: string, options?: { fitTextWidth?: boolean; resizeHeight?: boolean }) => {
+  const layoutCardObjects = useCallback((
+    cardId: string,
+    options?: { fitTextWidth?: boolean; resizeHeight?: boolean },
+    overrideCardObject?: any
+  ) => {
     const canvas = fabricRef.current
     if (!canvas) return null
 
@@ -63,7 +67,8 @@ export function InfiniteCanvas() {
       }
     }
 
-    if (!cardObject || !contentText) return null
+    const resolvedCardObject = overrideCardObject ?? cardObject
+    if (!resolvedCardObject || !contentText) return null
 
     if (titleText?.initDimensions) titleText.initDimensions()
     if (contentText?.initDimensions) contentText.initDimensions()
@@ -86,16 +91,16 @@ export function InfiniteCanvas() {
         Math.ceil(Math.max(titleTextWidth, contentTextWidth) + horizontalPadding)
       )
 
-      cardObject.set({
+      resolvedCardObject.set({
         width: nextWidth,
         scaleX: 1
       })
-      cardObject.setCoords()
+      resolvedCardObject.setCoords()
     }
 
-    const cardLeft = cardObject.left
-    const cardTop = cardObject.top
-    const innerWidth = Math.max(cardObject.width * (cardObject.scaleX || 1) - 20, 40)
+    const cardLeft = resolvedCardObject.left
+    const cardTop = resolvedCardObject.top
+    const innerWidth = Math.max(resolvedCardObject.width * (resolvedCardObject.scaleX || 1) - 20, 40)
     let currentTop = cardTop + 10
 
     if (titleText) {
@@ -151,11 +156,11 @@ export function InfiniteCanvas() {
 
     const nextHeight = Math.max(150, currentTop - cardTop + 10 - (orderedImages.length > 0 ? 8 : 0))
     if (options?.resizeHeight) {
-      cardObject.set({
+      resolvedCardObject.set({
         height: nextHeight,
         scaleY: 1
       })
-      cardObject.setCoords()
+      resolvedCardObject.setCoords()
     }
 
     canvas.requestRenderAll()
@@ -164,8 +169,8 @@ export function InfiniteCanvas() {
       title: titleText?.text || '',
       content: contentText?.text || '',
       size: {
-        width: cardObject.width * (cardObject.scaleX || 1),
-        height: options?.resizeHeight ? nextHeight : cardObject.height * (cardObject.scaleY || 1)
+        width: resolvedCardObject.width * (resolvedCardObject.scaleX || 1),
+        height: options?.resizeHeight ? nextHeight : resolvedCardObject.height * (resolvedCardObject.scaleY || 1)
       }
     }
   }, [])
@@ -219,7 +224,12 @@ export function InfiniteCanvas() {
 
     canvas.on('mouse:wheel', handleWheel)
 
-    const onMouseDown = (opt: { e: TPointerEvent }) => startPan(opt.e)
+    const onMouseDown = (opt: { e: TPointerEvent; target?: FabricObject }) => {
+      const noSelectedElement = !useElementsStore.getState().selectedId
+      const clickOnBlank = !opt.target
+      const allowDirectPan = currentTool !== 'select' && noSelectedElement && clickOnBlank
+      startPan(opt.e, allowDirectPan)
+    }
     const onMouseMove = (opt: { e: TPointerEvent }) => updatePan(opt.e)
     const onMouseUp = () => endPan()
 
@@ -233,7 +243,7 @@ export function InfiniteCanvas() {
       canvas.off('mouse:move', onMouseMove)
       canvas.off('mouse:up', onMouseUp)
     }
-  }, [handleWheel, startPan, updatePan, endPan])
+  }, [currentTool, handleWheel, startPan, updatePan, endPan])
 
   // Sync elements to Fabric canvas
   const syncElementsToCanvas = useCallback(async () => {
@@ -291,34 +301,6 @@ export function InfiniteCanvas() {
             layoutCardObjects(card.id, { resizeHeight: false })
           }
         })())
-      } else if (element.type === 'rectangle') {
-        const rect = new Rect({
-          left: element.position.x,
-          top: element.position.y,
-          width: element.size.width,
-          height: element.size.height,
-          stroke: element.strokeColor,
-          strokeWidth: element.strokeWidth,
-          fill: 'transparent'
-        })
-        ;(rect as any).data = { id: element.id, type: 'rectangle' }
-        rect.selectable = !element.locked
-        rect.evented = !element.locked
-        canvas.add(rect)
-      } else if (element.type === 'ellipse') {
-        const ellipse = new Ellipse({
-          left: element.position.x,
-          top: element.position.y,
-          rx: element.size.width / 2,
-          ry: element.size.height / 2,
-          stroke: element.strokeColor,
-          strokeWidth: element.strokeWidth,
-          fill: 'transparent'
-        })
-        ;(ellipse as any).data = { id: element.id, type: 'ellipse' }
-        ellipse.selectable = !element.locked
-        ellipse.evented = !element.locked
-        canvas.add(ellipse)
       }
     })
 
@@ -338,77 +320,114 @@ export function InfiniteCanvas() {
     const canvas = fabricRef.current
     if (!canvas) return
 
+    const getCardEntriesFromTarget = (target: any): Array<{ cardId: string; cardObject: any }> => {
+      if (!target) return []
+      if (target.data?.type === 'card' && target.data?.id) {
+        return [{ cardId: target.data.id as string, cardObject: target }]
+      }
+
+      if (target.type === 'activeSelection' && typeof target.getObjects === 'function') {
+        const entries = target
+          .getObjects()
+          .map((obj: any) => (
+            obj?.data?.type === 'card' && obj?.data?.id
+              ? { cardId: obj.data.id as string, cardObject: obj }
+              : null
+          ))
+          .filter((entry: { cardId: string; cardObject: any } | null): entry is { cardId: string; cardObject: any } => Boolean(entry))
+        const seen = new Set<string>()
+        return entries.filter((entry: { cardId: string; cardObject: any }) => {
+          if (seen.has(entry.cardId)) return false
+          seen.add(entry.cardId)
+          return true
+        })
+      }
+
+      return []
+    }
+
     const handleObjectMoving = (e: { target?: FabricObject }) => {
       const target = e.target as any
-      const synced = target?.data?.type === 'card'
-        ? layoutCardObjects(target.data.id, { resizeHeight: false })
-        : null
-      if (!synced) return
+      const cardEntries = getCardEntriesFromTarget(target)
+      if (cardEntries.length === 0) return
+
+      for (const entry of cardEntries) {
+        layoutCardObjects(entry.cardId, { resizeHeight: false }, entry.cardObject)
+      }
 
       canvas.requestRenderAll()
     }
 
     const handleObjectScaling = (e: { target?: FabricObject }) => {
       const target = e.target as any
-      const synced = target?.data?.type === 'card'
-        ? layoutCardObjects(target.data.id, { resizeHeight: false })
-        : null
-      if (!synced) return
+      const cardEntries = getCardEntriesFromTarget(target)
+      if (cardEntries.length === 0) return
+
+      for (const entry of cardEntries) {
+        layoutCardObjects(entry.cardId, { resizeHeight: false }, entry.cardObject)
+      }
 
       canvas.requestRenderAll()
     }
 
     const handleObjectModified = (e: { target?: FabricObject }) => {
       const target = e.target as any
-      if (!target || !target.data || target.data.type !== 'card') return
+      const cardEntries = getCardEntriesFromTarget(target)
+      if (cardEntries.length === 0) return
 
-      const cardId = target.data.id
-      const currentElement = useElementsStore.getState().getElement(cardId)
-      if (!currentElement || currentElement.type !== 'card') return
+      let hasAnyUpdate = false
 
-      // Build update object with all changed properties
-      const updates: Record<string, any> = {}
+      for (const entry of cardEntries) {
+        const cardId = entry.cardId
+        const cardObject = entry.cardObject
+        const currentElement = useElementsStore.getState().getElement(cardId)
+        if (!cardObject || !currentElement || currentElement.type !== 'card') continue
 
-      // Sync position
-      const newPosition = {
-        x: target.left,
-        y: target.top
+        const updates: Record<string, any> = {}
+        const newPosition = {
+          x: cardObject.left,
+          y: cardObject.top
+        }
+        if (currentElement.position.x !== newPosition.x || currentElement.position.y !== newPosition.y) {
+          updates.position = newPosition
+        }
+
+        const newSize = {
+          width: cardObject.width * (cardObject.scaleX || 1),
+          height: cardObject.height * (cardObject.scaleY || 1)
+        }
+        if (currentElement.size.width !== newSize.width || currentElement.size.height !== newSize.height) {
+          updates.size = newSize
+          cardObject.set({
+            width: newSize.width,
+            height: newSize.height,
+            scaleX: 1,
+            scaleY: 1
+          })
+        }
+
+        const fitted = layoutCardObjects(cardId, { resizeHeight: false }, cardObject)
+        const title = fitted?.title || ''
+        const content = fitted?.content || ''
+        if (currentElement.title !== title || currentElement.content !== content) {
+          updates.title = title
+          updates.content = content
+        }
+
+        if (Object.keys(updates).length > 0) {
+          updates.updatedAt = new Date().toISOString()
+          useElementsStore.getState().updateElement(cardId, updates as any)
+          hasAnyUpdate = true
+        }
       }
-      if (currentElement.position.x !== newPosition.x || currentElement.position.y !== newPosition.y) {
-        updates.position = newPosition
-      }
 
-      // Sync size (for cards, width/height are stored in size)
-      const newSize = {
-        width: target.width * (target.scaleX || 1),
-        height: target.height * (target.scaleY || 1)
-      }
-      if (currentElement.size.width !== newSize.width || currentElement.size.height !== newSize.height) {
-        updates.size = newSize
-        // Reset scale after applying to size
-        target.set({
-          width: newSize.width,
-          height: newSize.height,
-          scaleX: 1,
-          scaleY: 1
-        })
-      }
-
-      const fitted = layoutCardObjects(cardId, { resizeHeight: false })
-      const title = fitted?.title || ''
-      const content = fitted?.content || ''
-
-      if (currentElement.title !== title || currentElement.content !== content) {
-        updates.title = title
-        updates.content = content
-      }
-
-      // Apply updates if any
-      if (Object.keys(updates).length > 0) {
-        updates.updatedAt = new Date().toISOString()
-        useElementsStore.getState().updateElement(cardId, updates as any)
+      if (hasAnyUpdate) {
         useCanvasStore.getState().setDirty(true)
       }
+
+      // Ensure selection object does not keep stale transform state after commit.
+      canvas.discardActiveObject()
+      canvas.requestRenderAll()
     }
 
     canvas.on('object:moving', handleObjectMoving)
@@ -600,46 +619,6 @@ export function InfiniteCanvas() {
     canvas.on('mouse:dblclick', handleDblClick)
     return () => { canvas.off('mouse:dblclick', handleDblClick) }
   }, [currentTool, addCard, setTool, syncElementsToCanvas])
-
-  // Handle shape creation on click
-  useEffect(() => {
-    const canvas = fabricRef.current
-    if (!canvas) return
-
-    const handleClick = (opt: { e: TPointerEvent; target?: FabricObject }) => {
-      if (currentTool === 'select') return
-      if (opt.target) return
-
-      const scenePoint = canvas.getScenePoint(opt.e)
-
-      if (currentTool === 'rectangle') {
-        const id = useElementsStore.getState().addElement({
-          type: 'rectangle',
-          position: { x: scenePoint.x, y: scenePoint.y },
-          size: { width: 100, height: 100 },
-          strokeColor: '#333',
-          strokeWidth: 2,
-          locked: false
-        } as any)
-        useElementsStore.getState().setSelected(id)
-        setTool('select')
-      } else if (currentTool === 'ellipse') {
-        const id = useElementsStore.getState().addElement({
-          type: 'ellipse',
-          position: { x: scenePoint.x, y: scenePoint.y },
-          size: { width: 100, height: 100 },
-          strokeColor: '#333',
-          strokeWidth: 2,
-          locked: false
-        } as any)
-        useElementsStore.getState().setSelected(id)
-        setTool('select')
-      }
-    }
-
-    canvas.on('mouse:down', handleClick as any)
-    return () => { canvas.off('mouse:down', handleClick as any) }
-  }, [currentTool, setTool])
 
   // Handle selection
   useEffect(() => {
