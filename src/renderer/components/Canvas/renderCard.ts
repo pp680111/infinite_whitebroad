@@ -41,12 +41,15 @@ export function renderCard(
     selectable: !card.locked,
     hasControls: !card.locked,
     hasBorders: !card.locked,
+    centeredScaling: false,
+    lockScalingFlip: true,
     lockMovementX: card.locked,
     lockMovementY: card.locked,
     lockScalingX: card.locked,
     lockScalingY: card.locked,
     lockRotation: card.locked
   })
+  ;(bg as any).lockUniScaling = false
   ;(bg as any).data = { id, type: 'card', isEditing: options?.isEditing ?? false }
 
   // Title if present - independent object that won't scale with the card
@@ -57,6 +60,8 @@ export function renderCard(
       fontSize: 14,
       fontWeight: 'bold',
       fill: '#333',
+      objectCaching: false,
+      noScaleCache: false,
       left: position.x + 10,
       top: position.y + 10,
       editable: isEditing,
@@ -80,6 +85,8 @@ export function renderCard(
     width: size.width - 20,
     fontSize: 13,
     fill: content ? '#555' : '#999',
+    objectCaching: false,
+    noScaleCache: false,
     left: position.x + 10,
     top: position.y + (title ? 35 : 10),
     editable: isEditing,

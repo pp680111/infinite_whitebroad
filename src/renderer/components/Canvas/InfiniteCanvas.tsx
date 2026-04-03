@@ -23,6 +23,8 @@ export function InfiniteCanvas() {
   const skipNextSyncRef = useRef(false)
   const ignoreNextEditMouseDownRef = useRef(false)
   const handlingObjectModifiedRef = useRef(false)
+  const isPointerTransformingRef = useRef(false)
+  const hoveredCardIdRef = useRef<string | null>(null)
   const activeSelectionDragSessionRef = useRef<{
     target: any
     cardIds: Set<string>
@@ -295,7 +297,12 @@ export function InfiniteCanvas() {
       height: window.innerHeight,
       backgroundColor: '#f5f5f5',
       selection: true,
-      preserveObjectStacking: true
+      preserveObjectStacking: true,
+      enableRetinaScaling: true,
+      // Corner handles resize card width/height independently by default.
+      // Hold Shift to keep aspect ratio when needed.
+      uniformScaling: false,
+      uniScaleKey: 'shiftKey'
     })
     fabricRef.current = canvas
 
@@ -535,6 +542,7 @@ export function InfiniteCanvas() {
     }
 
     const handleObjectScaling = (e: { target?: FabricObject }) => {
+      isPointerTransformingRef.current = true
       const target = e.target as any
       const cardEntries = getCardEntriesForInteraction(target)
       if (cardEntries.length === 0) return
@@ -634,17 +642,33 @@ export function InfiniteCanvas() {
         canvas.requestRenderAll()
       } finally {
         activeSelectionDragSessionRef.current = null
+        isPointerTransformingRef.current = false
         handlingObjectModifiedRef.current = false
       }
+    }
+
+    const handleMouseDown = (e: { target?: FabricObject }) => {
+      const target = e.target as any
+      if (target?.data?.type === 'card') {
+        isPointerTransformingRef.current = true
+      }
+    }
+
+    const handleMouseUp = () => {
+      isPointerTransformingRef.current = false
     }
 
     canvas.on('object:moving', handleObjectMoving)
     canvas.on('object:scaling', handleObjectScaling)
     canvas.on('object:modified', handleObjectModified)
+    canvas.on('mouse:down', handleMouseDown as any)
+    canvas.on('mouse:up', handleMouseUp as any)
     return () => {
       canvas.off('object:moving', handleObjectMoving)
       canvas.off('object:scaling', handleObjectScaling)
       canvas.off('object:modified', handleObjectModified)
+      canvas.off('mouse:down', handleMouseDown as any)
+      canvas.off('mouse:up', handleMouseUp as any)
     }
   }, [
     createActiveSelectionDragSession,
@@ -659,6 +683,51 @@ export function InfiniteCanvas() {
   useEffect(() => {
     isEditingCardIdRef.current = isEditingCardId
   }, [isEditingCardId])
+
+  // Hover to activate card so drag/resize can start immediately without pre-click selection.
+  useEffect(() => {
+    const canvas = fabricRef.current
+    if (!canvas) return
+
+    const handleHover = (opt: { target?: FabricObject }) => {
+      if (currentTool !== 'select') return
+      if (isEditingCardIdRef.current) return
+      if (isPointerTransformingRef.current) return
+
+      const target = opt.target as any
+      const hoveredCardId =
+        target?.data?.type === 'card' && typeof target?.data?.id === 'string'
+          ? (target.data.id as string)
+          : null
+      const hoveredCard = hoveredCardId ? useElementsStore.getState().getElement(hoveredCardId) : null
+      const shouldActivateCard = Boolean(hoveredCardId && hoveredCard?.type === 'card' && !hoveredCard.locked)
+      const activeObject = canvas.getActiveObject() as any
+      const activeCardId =
+        activeObject?.data?.type === 'card' && typeof activeObject?.data?.id === 'string'
+          ? (activeObject.data.id as string)
+          : null
+
+      if (shouldActivateCard) {
+        if (activeCardId !== hoveredCardId) {
+          canvas.setActiveObject(target)
+          hoveredCardIdRef.current = hoveredCardId
+          canvas.requestRenderAll()
+        }
+        return
+      }
+
+      if (hoveredCardIdRef.current && activeCardId === hoveredCardIdRef.current) {
+        canvas.discardActiveObject()
+        hoveredCardIdRef.current = null
+        canvas.requestRenderAll()
+      }
+    }
+
+    canvas.on('mouse:move', handleHover as any)
+    return () => {
+      canvas.off('mouse:move', handleHover as any)
+    }
+  }, [currentTool])
 
   useEffect(() => {
     const canvas = fabricRef.current
@@ -686,6 +755,8 @@ export function InfiniteCanvas() {
         textAlign: 'center',
         fill: '#ffffff',
         backgroundColor: '#ef4444',
+        objectCaching: false,
+        noScaleCache: false,
         editable: false,
         selectable: true,
         evented: true,
