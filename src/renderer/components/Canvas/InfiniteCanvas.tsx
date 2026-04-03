@@ -34,6 +34,8 @@ export function InfiniteCanvas() {
   } | null>(null)
   const [zoom, setZoom] = useState(100)
   const [isEditingCardId, setIsEditingCardId] = useState<string | null>(null)
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'saving' | 'done' | null>(null)
+  const autoSaveToastTimerRef = useRef<number | null>(null)
   const isEditingCardIdRef = useRef<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{
     x: number
@@ -49,7 +51,8 @@ export function InfiniteCanvas() {
     newDocument,
     loadDocument,
     loadLastOpenedDocument,
-    saveDocumentAs
+    saveDocumentAs,
+    autoSaveDocument
   } = useCanvasStore()
   const addImageToCard = useElementsStore((s) => s.addImageToCard)
   const removeImageFromCard = useElementsStore((s) => s.removeImageFromCard)
@@ -469,6 +472,42 @@ export function InfiniteCanvas() {
   useEffect(() => {
     void syncElementsToCanvas()
   }, [syncElementsToCanvas])
+
+  // Auto-save every 10 seconds.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const dirty = useCanvasStore.getState().isDirty
+      if (!dirty) return
+
+      if (autoSaveToastTimerRef.current) {
+        window.clearTimeout(autoSaveToastTimerRef.current)
+        autoSaveToastTimerRef.current = null
+      }
+
+      setAutoSaveStatus('saving')
+      void (async () => {
+        const saved = await autoSaveDocument()
+        if (!saved) {
+          setAutoSaveStatus(null)
+          return
+        }
+
+        setAutoSaveStatus('done')
+        autoSaveToastTimerRef.current = window.setTimeout(() => {
+          setAutoSaveStatus(null)
+          autoSaveToastTimerRef.current = null
+        }, 1600)
+      })()
+    }, 10000)
+
+    return () => {
+      window.clearInterval(timer)
+      if (autoSaveToastTimerRef.current) {
+        window.clearTimeout(autoSaveToastTimerRef.current)
+        autoSaveToastTimerRef.current = null
+      }
+    }
+  }, [autoSaveDocument])
 
   // Sync card state changes (position, size, content) to store
   useEffect(() => {
@@ -1394,6 +1433,13 @@ export function InfiniteCanvas() {
         onZoomOut={zoomOut}
         onReset={resetZoom}
       />
+      {autoSaveStatus && (
+        <div className="absolute right-4 bottom-4 z-50 pointer-events-none">
+          <div className="px-3 py-2 rounded-md bg-gray-900/90 text-white text-sm shadow-lg">
+            {autoSaveStatus === 'saving' ? '自动保存中' : '自动保存已完成'}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

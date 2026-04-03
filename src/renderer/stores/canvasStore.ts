@@ -5,6 +5,7 @@ import { CanvasElement, CardElement } from '../types/card'
 interface CanvasState {
   documentName: string
   filePath: string | null
+  autoSavePath: string | null
   isDirty: boolean
   viewport: { x: number; y: number; zoom: number }
   newDocument: () => void
@@ -16,6 +17,7 @@ interface CanvasState {
   loadLastOpenedDocument: () => Promise<void>
   saveDocument: () => Promise<void>
   saveDocumentAs: () => Promise<void>
+  autoSaveDocument: () => Promise<boolean>
   getDocumentData: () => {
     version: string
     metadata: {
@@ -53,6 +55,7 @@ function hydrateDocument(
   set({
     documentName: data.metadata?.name || DEFAULT_DOCUMENT_NAME,
     filePath,
+    autoSavePath: filePath,
     isDirty: false,
     viewport: data.metadata?.viewport || DEFAULT_VIEWPORT
   })
@@ -61,12 +64,24 @@ function hydrateDocument(
 export const useCanvasStore = create<CanvasState>((set, get) => ({
   documentName: DEFAULT_DOCUMENT_NAME,
   filePath: null,
+  autoSavePath: null,
   isDirty: false,
   viewport: DEFAULT_VIEWPORT,
 
   newDocument: () => {
+    const { filePath, autoSavePath } = get()
+    if (window.electronAPI && !filePath && autoSavePath) {
+      void window.electronAPI.file.delete(autoSavePath)
+    }
+
     useElementsStore.getState().clear()
-    set({ documentName: DEFAULT_DOCUMENT_NAME, filePath: null, isDirty: false, viewport: DEFAULT_VIEWPORT })
+    set({
+      documentName: DEFAULT_DOCUMENT_NAME,
+      filePath: null,
+      autoSavePath: null,
+      isDirty: false,
+      viewport: DEFAULT_VIEWPORT
+    })
     if (window.electronAPI) {
       void window.electronAPI.file.setLastOpened(null)
     }
@@ -106,6 +121,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return
     }
 
+    const { filePath: currentFilePath, autoSavePath: currentAutoSavePath } = get()
+    if (!currentFilePath && currentAutoSavePath) {
+      await window.electronAPI.file.delete(currentAutoSavePath)
+    }
+
     const result = await window.electronAPI.file.open()
     if (!result.success || !result.data) return
 
@@ -118,6 +138,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   loadLastOpenedDocument: async () => {
     if (!window.electronAPI) return
+
+    const { filePath: currentFilePath, autoSavePath: currentAutoSavePath } = get()
+    if (!currentFilePath && currentAutoSavePath) {
+      await window.electronAPI.file.delete(currentAutoSavePath)
+    }
 
     const lastOpenedPath = await window.electronAPI.file.getLastOpened()
     if (!lastOpenedPath) return
@@ -141,14 +166,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return
     }
 
-    const { filePath } = get()
+    const { filePath, autoSavePath } = get()
     const data = get().getDocumentData()
     const result = filePath
       ? await window.electronAPI.file.save(data, filePath)
       : await window.electronAPI.file.saveAs(data)
 
     if (result.success && result.filePath) {
-      set({ filePath: result.filePath, isDirty: false })
+      if (!filePath && autoSavePath && autoSavePath !== result.filePath) {
+        await window.electronAPI.file.delete(autoSavePath)
+      }
+      set({ filePath: result.filePath, autoSavePath: result.filePath, isDirty: false })
       await window.electronAPI.file.addRecent(result.filePath)
       await window.electronAPI.file.setLastOpened(result.filePath)
     }
@@ -160,13 +188,35 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return
     }
 
+    const { filePath, autoSavePath } = get()
     const data = get().getDocumentData()
     const result = await window.electronAPI.file.saveAs(data)
     if (result.success && result.filePath) {
-      set({ filePath: result.filePath, isDirty: false })
+      if (!filePath && autoSavePath && autoSavePath !== result.filePath) {
+        await window.electronAPI.file.delete(autoSavePath)
+      }
+      set({ filePath: result.filePath, autoSavePath: result.filePath, isDirty: false })
       await window.electronAPI.file.addRecent(result.filePath)
       await window.electronAPI.file.setLastOpened(result.filePath)
     }
+  },
+
+  autoSaveDocument: async () => {
+    if (!window.electronAPI) return false
+
+    const { isDirty, filePath, autoSavePath } = get()
+    if (!isDirty) return false
+
+    const data = get().getDocumentData()
+    const targetPath = filePath || autoSavePath || undefined
+    const result = await window.electronAPI.file.autoSave(data, targetPath, !filePath)
+    if (!result.success || !result.filePath) return false
+
+    set({
+      autoSavePath: result.filePath,
+      isDirty: false
+    })
+    return true
   },
 
   addCard: (x: number, y: number) => {

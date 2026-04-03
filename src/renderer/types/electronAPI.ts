@@ -5,6 +5,12 @@ export interface ElectronAPI {
     openPath: (filePath: string) => Promise<{ success: boolean; data?: unknown; filePath?: string; canceled?: boolean; error?: string }>
     save: (data: unknown, filePath?: string) => Promise<{ success: boolean; filePath?: string; error?: string }>
     saveAs: (data: unknown) => Promise<{ success: boolean; filePath?: string; canceled?: boolean; error?: string }>
+    autoSave: (
+      data: unknown,
+      filePath?: string,
+      isTemporary?: boolean
+    ) => Promise<{ success: boolean; filePath?: string; isTemporary?: boolean; error?: string }>
+    delete: (filePath: string) => Promise<{ success: boolean; error?: string }>
     getRecent: () => Promise<string[]>
     addRecent: (filePath: string) => Promise<{ success: boolean }>
     getLastOpened: () => Promise<string | null>

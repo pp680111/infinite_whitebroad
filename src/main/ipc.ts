@@ -1,5 +1,6 @@
-import { ipcMain, dialog, BrowserWindow } from 'electron'
-import { readFile, writeFile } from 'fs/promises'
+import { ipcMain, dialog, BrowserWindow, app } from 'electron'
+import { readFile, writeFile, unlink } from 'fs/promises'
+import { join } from 'path'
 import Store from 'electron-store'
 
 const store = new Store<{ recentFiles: string[]; lastOpenedFile: string | null }>({
@@ -7,6 +8,15 @@ const store = new Store<{ recentFiles: string[]; lastOpenedFile: string | null }
 })
 
 export function setupIPC(mainWindow: BrowserWindow) {
+  const writeDocument = async (targetPath: string, data: unknown, options?: { writeBackupTmp?: boolean }) => {
+    const content = JSON.stringify(data, null, 2)
+    if (options?.writeBackupTmp) {
+      const tmpPath = targetPath + '.tmp'
+      await writeFile(tmpPath, content, 'utf-8')
+    }
+    await writeFile(targetPath, content, 'utf-8')
+  }
+
   const pushRecentFile = (filePath: string) => {
     const recent = store.get('recentFiles', [])
     const filtered = recent.filter((f: string) => f !== filePath)
@@ -50,9 +60,7 @@ export function setupIPC(mainWindow: BrowserWindow) {
       filePath = result.filePath
     }
     try {
-      const tmpPath = filePath + '.tmp'
-      await writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf-8')
-      await writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8')
+      await writeDocument(filePath, data, { writeBackupTmp: true })
       pushRecentFile(filePath)
       store.set('lastOpenedFile', filePath)
       return { success: true, filePath }
@@ -70,14 +78,41 @@ export function setupIPC(mainWindow: BrowserWindow) {
     }
     const filePath = result.filePath
     try {
-      const tmpPath = filePath + '.tmp'
-      await writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf-8')
-      await writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8')
+      await writeDocument(filePath, data, { writeBackupTmp: true })
       pushRecentFile(filePath)
       store.set('lastOpenedFile', filePath)
       return { success: true, filePath }
     } catch (error) {
       return { success: false, error: 'Failed to save file' }
+    }
+  })
+
+  ipcMain.handle('file:auto-save', async (_, { data, filePath, isTemporary }) => {
+    const resolvedPath =
+      filePath ||
+      join(app.getPath('temp'), `infinite-whiteboard-autosave-${Date.now()}-${Math.random().toString(16).slice(2)}.whiteboard`)
+
+    try {
+      await writeDocument(resolvedPath, data, { writeBackupTmp: !isTemporary })
+      return { success: true, filePath: resolvedPath, isTemporary: Boolean(isTemporary) }
+    } catch (error) {
+      return { success: false, error: 'Failed to auto save file' }
+    }
+  })
+
+  ipcMain.handle('file:delete', async (_, filePath: string) => {
+    if (!filePath) {
+      return { success: false, error: 'Missing file path' }
+    }
+
+    try {
+      await unlink(filePath)
+      return { success: true }
+    } catch (error: any) {
+      if (error?.code === 'ENOENT') {
+        return { success: true }
+      }
+      return { success: false, error: 'Failed to delete file' }
     }
   })
 

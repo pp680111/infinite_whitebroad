@@ -7,6 +7,9 @@ const api = {
     openPath: (filePath: string) => ipcRenderer.invoke('file:open-path', filePath),
     save: (data: unknown, filePath?: string) => ipcRenderer.invoke('file:save', { data, filePath }),
     saveAs: (data: unknown) => ipcRenderer.invoke('file:save-as', { data }),
+    autoSave: (data: unknown, filePath?: string, isTemporary?: boolean) =>
+      ipcRenderer.invoke('file:auto-save', { data, filePath, isTemporary }),
+    delete: (filePath: string) => ipcRenderer.invoke('file:delete', filePath),
     getRecent: () => ipcRenderer.invoke('file:get-recent'),
     addRecent: (filePath: string) => ipcRenderer.invoke('file:add-recent', filePath),
     getLastOpened: () => ipcRenderer.invoke('file:get-last-opened'),
