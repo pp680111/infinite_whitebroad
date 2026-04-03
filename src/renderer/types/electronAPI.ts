@@ -2,10 +2,13 @@ export interface ElectronAPI {
   file: {
     new: () => Promise<{ success: boolean }>
     open: () => Promise<{ success: boolean; data?: unknown; filePath?: string; canceled?: boolean; error?: string }>
+    openPath: (filePath: string) => Promise<{ success: boolean; data?: unknown; filePath?: string; canceled?: boolean; error?: string }>
     save: (data: unknown, filePath?: string) => Promise<{ success: boolean; filePath?: string; error?: string }>
     saveAs: (data: unknown) => Promise<{ success: boolean; filePath?: string; canceled?: boolean; error?: string }>
     getRecent: () => Promise<string[]>
     addRecent: (filePath: string) => Promise<{ success: boolean }>
+    getLastOpened: () => Promise<string | null>
+    setLastOpened: (filePath: string | null) => Promise<{ success: boolean }>
   }
   onMenuNew: (callback: () => void) => void
   onMenuOpen: (callback: () => void) => void

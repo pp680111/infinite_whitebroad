@@ -13,6 +13,7 @@ interface CanvasState {
   setDirty: (dirty: boolean) => void
   setViewport: (viewport: { x: number; y: number; zoom: number }) => void
   loadDocument: () => Promise<void>
+  loadLastOpenedDocument: () => Promise<void>
   saveDocument: () => Promise<void>
   saveDocumentAs: () => Promise<void>
   getDocumentData: () => {
@@ -29,15 +30,46 @@ interface CanvasState {
   addCard: (x: number, y: number) => void
 }
 
+type LoadedDocumentData = {
+  metadata?: { name?: string; viewport?: { x: number; y: number; zoom: number } }
+  canvasState?: { elements?: CanvasElement[] }
+}
+
+const DEFAULT_DOCUMENT_NAME = '未命名'
+const DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 }
+
+function hydrateDocument(
+  data: LoadedDocumentData,
+  filePath: string | null,
+  set: (partial: Partial<CanvasState>) => void
+) {
+  useElementsStore.getState().clear()
+  if (data.canvasState?.elements) {
+    data.canvasState.elements.forEach((el) => {
+      useElementsStore.getState().addElement(el)
+    })
+  }
+
+  set({
+    documentName: data.metadata?.name || DEFAULT_DOCUMENT_NAME,
+    filePath,
+    isDirty: false,
+    viewport: data.metadata?.viewport || DEFAULT_VIEWPORT
+  })
+}
+
 export const useCanvasStore = create<CanvasState>((set, get) => ({
-  documentName: '未命名',
+  documentName: DEFAULT_DOCUMENT_NAME,
   filePath: null,
   isDirty: false,
-  viewport: { x: 0, y: 0, zoom: 1 },
+  viewport: DEFAULT_VIEWPORT,
 
   newDocument: () => {
     useElementsStore.getState().clear()
-    set({ documentName: '未命名', filePath: null, isDirty: false, viewport: { x: 0, y: 0, zoom: 1 } })
+    set({ documentName: DEFAULT_DOCUMENT_NAME, filePath: null, isDirty: false, viewport: DEFAULT_VIEWPORT })
+    if (window.electronAPI) {
+      void window.electronAPI.file.setLastOpened(null)
+    }
   },
 
   setDocumentName: (name) => set({ documentName: name, isDirty: true }),
@@ -73,24 +105,33 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       console.warn('Load document failed: electronAPI not available')
       return
     }
+
     const result = await window.electronAPI.file.open()
-    if (result.success && result.data) {
-      const data = result.data as {
-        metadata?: { name?: string; viewport?: { x: number; y: number; zoom: number } }
-        canvasState?: { elements?: CanvasElement[] }
-      }
-      useElementsStore.getState().clear()
-      if (data.canvasState?.elements) {
-        data.canvasState.elements.forEach((el) => {
-          useElementsStore.getState().addElement(el)
-        })
-      }
-      set({
-        documentName: data.metadata?.name || '未命名',
-        filePath: result.filePath || null,
-        isDirty: false,
-        viewport: data.metadata?.viewport || { x: 0, y: 0, zoom: 1 }
-      })
+    if (!result.success || !result.data) return
+
+    hydrateDocument(result.data as LoadedDocumentData, result.filePath || null, set)
+    if (result.filePath) {
+      await window.electronAPI.file.addRecent(result.filePath)
+      await window.electronAPI.file.setLastOpened(result.filePath)
+    }
+  },
+
+  loadLastOpenedDocument: async () => {
+    if (!window.electronAPI) return
+
+    const lastOpenedPath = await window.electronAPI.file.getLastOpened()
+    if (!lastOpenedPath) return
+
+    const result = await window.electronAPI.file.openPath(lastOpenedPath)
+    if (!result.success || !result.data) {
+      await window.electronAPI.file.setLastOpened(null)
+      return
+    }
+
+    hydrateDocument(result.data as LoadedDocumentData, result.filePath || null, set)
+    if (result.filePath) {
+      await window.electronAPI.file.addRecent(result.filePath)
+      await window.electronAPI.file.setLastOpened(result.filePath)
     }
   },
 
@@ -99,14 +140,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       console.warn('Save document failed: electronAPI not available')
       return
     }
+
     const { filePath } = get()
     const data = get().getDocumentData()
     const result = filePath
       ? await window.electronAPI.file.save(data, filePath)
       : await window.electronAPI.file.saveAs(data)
+
     if (result.success && result.filePath) {
       set({ filePath: result.filePath, isDirty: false })
       await window.electronAPI.file.addRecent(result.filePath)
+      await window.electronAPI.file.setLastOpened(result.filePath)
     }
   },
 
@@ -115,11 +159,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       console.warn('Save document failed: electronAPI not available')
       return
     }
+
     const data = get().getDocumentData()
     const result = await window.electronAPI.file.saveAs(data)
     if (result.success && result.filePath) {
       set({ filePath: result.filePath, isDirty: false })
       await window.electronAPI.file.addRecent(result.filePath)
+      await window.electronAPI.file.setLastOpened(result.filePath)
     }
   },
 

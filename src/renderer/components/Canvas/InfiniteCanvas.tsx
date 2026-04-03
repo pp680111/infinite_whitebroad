@@ -43,7 +43,14 @@ export function InfiniteCanvas() {
   } | null>(null)
   const elements = useElementsStore((s) => s.elements)
   const { currentTool, setTool } = useToolStore()
-  const { addCard, saveDocument, newDocument, loadDocument, saveDocumentAs } = useCanvasStore()
+  const {
+    addCard,
+    saveDocument,
+    newDocument,
+    loadDocument,
+    loadLastOpenedDocument,
+    saveDocumentAs
+  } = useCanvasStore()
   const addImageToCard = useElementsStore((s) => s.addImageToCard)
   const removeImageFromCard = useElementsStore((s) => s.removeImageFromCard)
   const isActiveSelectionType = useCallback((value: unknown) => {
@@ -288,6 +295,30 @@ export function InfiniteCanvas() {
   const fitCardToText = useCallback((cardId: string) => {
     return layoutCardObjects(cardId, { fitTextWidth: true, resizeHeight: true })
   }, [layoutCardObjects])
+  const findCardTextboxes = useCallback((cardId: string) => {
+    const canvas = fabricRef.current
+    if (!canvas) {
+      return {
+        titleTextbox: undefined as any,
+        contentTextbox: undefined as any
+      }
+    }
+
+    const objects = canvas.getObjects()
+    let titleTextbox: any = undefined
+    let contentTextbox: any = undefined
+    for (const obj of objects) {
+      const o = obj as any
+      if (o.data?.cardId !== cardId) continue
+      if (o.data?.isTitle) {
+        titleTextbox = o
+      } else if (o.data?.isContent) {
+        contentTextbox = o
+      }
+    }
+
+    return { titleTextbox, contentTextbox }
+  }, [])
 
   useEffect(() => {
     if (!canvasRef.current || fabricRef.current) return
@@ -430,6 +461,10 @@ export function InfiniteCanvas() {
       canvas.renderAll()
     }
   }, [elements, layoutCardObjects])
+
+  useEffect(() => {
+    void loadLastOpenedDocument()
+  }, [loadLastOpenedDocument])
 
   useEffect(() => {
     void syncElementsToCanvas()
@@ -800,20 +835,7 @@ export function InfiniteCanvas() {
           setIsEditingCardId(cardId)
           useElementsStore.getState().setEditingCard(cardId)
 
-          // Find the existing card's textboxes
-          const objects = canvas.getObjects()
-          let titleText: any = undefined
-          let contentText: any = undefined
-          for (const obj of objects) {
-            const o = obj as any
-            if (o.data?.cardId === cardId) {
-              if (o.data?.isTitle) {
-                titleText = o
-              } else if (o.data?.isContent) {
-                contentText = o
-              }
-            }
-          }
+          const { titleTextbox: titleText, contentTextbox: contentText } = findCardTextboxes(cardId)
 
           if (titleText || contentText) {
             // Clear any active selection to prevent interference
@@ -852,19 +874,7 @@ export function InfiniteCanvas() {
         // First, save the currently editing card if any
         const editingCardId = isEditingCardIdRef.current
         if (editingCardId) {
-          const objects = canvas.getObjects()
-          let titleTextbox: any = undefined
-          let contentTextbox: any = undefined
-          for (const obj of objects) {
-            const o = obj as any
-            if (o.data?.cardId === editingCardId) {
-              if (o.data?.isTitle) {
-                titleTextbox = o
-              } else if (o.data?.isContent) {
-                contentTextbox = o
-              }
-            }
-          }
+          const { titleTextbox, contentTextbox } = findCardTextboxes(editingCardId)
 
           if (titleTextbox || contentTextbox) {
             const fitted = fitCardToText(editingCardId)
@@ -904,7 +914,7 @@ export function InfiniteCanvas() {
 
     canvas.on('mouse:dblclick', handleDblClick)
     return () => { canvas.off('mouse:dblclick', handleDblClick) }
-  }, [currentTool, addCard, setTool, syncElementsToCanvas])
+  }, [currentTool, addCard, findCardTextboxes, setTool, syncElementsToCanvas])
 
   // Handle selection
   useEffect(() => {
@@ -996,47 +1006,43 @@ export function InfiniteCanvas() {
       } as any)
 
       // Disable editing on the textboxes without re-rendering
-      const canvas = fabricRef.current
-      if (canvas) {
-        const objects = canvas.getObjects()
-        for (const obj of objects) {
-          const o = obj as any
-            if (o.data?.cardId === isEditingCardId) {
-              if (o.data?.isTitle || o.data?.isContent) {
-                ;(o as any).editable = false
-                o.selectable = false
-                o.evented = false
-              }
-            }
-          }
+      const { titleTextbox, contentTextbox } = findCardTextboxes(isEditingCardId)
+      if (titleTextbox) {
+        ;(titleTextbox as any).editable = false
+        titleTextbox.selectable = false
+        titleTextbox.evented = false
+      }
+      if (contentTextbox) {
+        ;(contentTextbox as any).editable = false
+        contentTextbox.selectable = false
+        contentTextbox.evented = false
       }
 
       setIsEditingCardId(null)
       useElementsStore.getState().setEditingCard(null)
       useCanvasStore.getState().setDirty(true)
     }
-  }, [fitCardToText, isEditingCardId])
+  }, [findCardTextboxes, fitCardToText, isEditingCardId])
 
   const cancelEditingCard = useCallback(() => {
     // Disable editing on the textboxes without re-rendering
-    const canvas = fabricRef.current
-    if (canvas) {
-      const objects = canvas.getObjects()
-      for (const obj of objects) {
-        const o = obj as any
-        if (o.data?.cardId === isEditingCardId) {
-          if (o.data?.isTitle || o.data?.isContent) {
-            ;(o as any).editable = false
-            o.selectable = false
-            o.evented = false
-          }
-        }
+    if (isEditingCardId) {
+      const { titleTextbox, contentTextbox } = findCardTextboxes(isEditingCardId)
+      if (titleTextbox) {
+        ;(titleTextbox as any).editable = false
+        titleTextbox.selectable = false
+        titleTextbox.evented = false
+      }
+      if (contentTextbox) {
+        ;(contentTextbox as any).editable = false
+        contentTextbox.selectable = false
+        contentTextbox.evented = false
       }
     }
 
     setIsEditingCardId(null)
     useElementsStore.getState().setEditingCard(null)
-  }, [isEditingCardId])
+  }, [findCardTextboxes, isEditingCardId])
 
   // Handle text editing completion
   useEffect(() => {
@@ -1058,19 +1064,7 @@ export function InfiniteCanvas() {
       const currentEditingId = isEditingCardIdRef.current
       if (!currentEditingId) return
 
-      const objects = canvas.getObjects()
-      let titleTextbox: any = undefined
-      let contentTextbox: any = undefined
-      for (const obj of objects) {
-        const o = obj as any
-        if (o.data?.cardId === currentEditingId) {
-          if (o.data?.isTitle) {
-            titleTextbox = o
-          } else if (o.data?.isContent) {
-            contentTextbox = o
-          }
-        }
-      }
+      const { titleTextbox, contentTextbox } = findCardTextboxes(currentEditingId)
 
       if (!titleTextbox && !contentTextbox) return
 
@@ -1121,20 +1115,7 @@ export function InfiniteCanvas() {
       // Don't interfere with text editing clicks on the editing card's textboxes
       if (target && (target.type === 'textbox' || target.type === 'i-text')) return
 
-      // Find the editing card's textboxes
-      const objects = canvas.getObjects()
-      let titleTextbox: any = undefined
-      let contentTextbox: any = undefined
-      for (const obj of objects) {
-        const o = obj as any
-        if (o.data?.cardId === currentEditingId) {
-          if (o.data?.isTitle) {
-            titleTextbox = o
-          } else if (o.data?.isContent) {
-            contentTextbox = o
-          }
-        }
-      }
+      const { titleTextbox, contentTextbox } = findCardTextboxes(currentEditingId)
 
       if (!titleTextbox && !contentTextbox) return
 
@@ -1177,7 +1158,7 @@ export function InfiniteCanvas() {
       ;(canvas.off as any)('textbox:editing:exited', handleEditingExited)
       ;(canvas.off as any)('mouse:down', handleMouseDown)
     }
-  }, [fitCardToText, isEditingCardId, saveEditingCard])
+  }, [findCardTextboxes, fitCardToText, isEditingCardId, saveEditingCard])
 
   // Navigate canvas to show a specific card
   const navigateToCard = useCallback((cardId: string) => {
@@ -1253,6 +1234,27 @@ export function InfiniteCanvas() {
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'a' || e.code === 'KeyA')) {
+        const target = e.target as HTMLElement | null
+        const tagName = target?.tagName?.toLowerCase()
+        const isNativeTextInput =
+          tagName === 'input' ||
+          tagName === 'textarea' ||
+          Boolean(target?.isContentEditable)
+        const isFabricHiddenTextarea =
+          tagName === 'textarea' && (
+            target?.classList?.contains('hiddenTextarea') ||
+            target?.getAttribute('aria-hidden') === 'true'
+          )
+        const allowInputSelectAll = isNativeTextInput && !isFabricHiddenTextarea
+
+        // Avoid browser "select all page text" in canvas mode.
+        // Keep default behavior only for real text inputs or card text editing.
+        if (!allowInputSelectAll && !isEditingCardIdRef.current) {
+          e.preventDefault()
+          e.stopPropagation()
+        }
+      }
       if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
         e.preventDefault()
         useSearchStore.getState().open()

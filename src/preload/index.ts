@@ -4,10 +4,13 @@ const api = {
   file: {
     new: () => ipcRenderer.invoke('file:new'),
     open: () => ipcRenderer.invoke('file:open'),
+    openPath: (filePath: string) => ipcRenderer.invoke('file:open-path', filePath),
     save: (data: unknown, filePath?: string) => ipcRenderer.invoke('file:save', { data, filePath }),
     saveAs: (data: unknown) => ipcRenderer.invoke('file:save-as', { data }),
     getRecent: () => ipcRenderer.invoke('file:get-recent'),
-    addRecent: (filePath: string) => ipcRenderer.invoke('file:add-recent', filePath)
+    addRecent: (filePath: string) => ipcRenderer.invoke('file:add-recent', filePath),
+    getLastOpened: () => ipcRenderer.invoke('file:get-last-opened'),
+    setLastOpened: (filePath: string | null) => ipcRenderer.invoke('file:set-last-opened', filePath)
   },
   onMenuNew: (callback: () => void) => ipcRenderer.on('menu:new', callback),
   onMenuOpen: (callback: () => void) => ipcRenderer.on('menu:open', callback),
