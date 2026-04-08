@@ -13,6 +13,8 @@ import { SearchPanel } from '../SearchPanel/SearchPanel'
 import { ZoomControl } from '../ZoomControl/ZoomControl'
 import { CardElement } from '../../types/card'
 
+const DEBUG_CONTEXT_MENU = false
+
 export function InfiniteCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<FabricCanvas | null>(null)
@@ -37,10 +39,14 @@ export function InfiniteCanvas() {
   const [autoSaveStatus, setAutoSaveStatus] = useState<'saving' | 'done' | null>(null)
   const autoSaveToastTimerRef = useRef<number | null>(null)
   const isEditingCardIdRef = useRef<string | null>(null)
+  const lastPointerClientRef = useRef<{ x: number; y: number } | null>(null)
+  const copiedCardRef = useRef<Omit<CardElement, 'id'> | null>(null)
+  const pasteCountRef = useRef(0)
+  const [hasCopiedCard, setHasCopiedCard] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
     x: number
     y: number
-    elementId: string
+    elementId: string | null
     isLocked: boolean
   } | null>(null)
   const elements = useElementsStore((s) => s.elements)
@@ -333,12 +339,50 @@ export function InfiniteCanvas() {
       selection: true,
       preserveObjectStacking: true,
       enableRetinaScaling: true,
+      fireRightClick: true,
+      stopContextMenu: true,
       // Corner handles resize card width/height independently by default.
       // Hold Shift to keep aspect ratio when needed.
       uniformScaling: false,
       uniScaleKey: 'shiftKey'
     })
+    if (DEBUG_CONTEXT_MENU) {
+      console.log('[ctx-debug] canvas init', {
+        fireRightClick: (canvas as any).fireRightClick,
+        stopContextMenu: (canvas as any).stopContextMenu
+      })
+    }
     fabricRef.current = canvas
+
+    // Keep a native trace to verify whether right click reaches the canvas DOM layer.
+    const upperCanvasEl = (canvas as any).upperCanvasEl as HTMLCanvasElement | undefined
+    const rememberPointer = (evt: MouseEvent) => {
+      lastPointerClientRef.current = { x: evt.clientX, y: evt.clientY }
+    }
+    const nativeContextMenuLogger = (evt: MouseEvent) => {
+      if (!DEBUG_CONTEXT_MENU) return
+      console.log('[ctx-debug] native contextmenu', {
+        button: evt.button,
+        x: evt.clientX,
+        y: evt.clientY,
+        targetTag: (evt.target as HTMLElement | null)?.tagName
+      })
+    }
+    const nativeMouseDownLogger = (evt: MouseEvent) => {
+      rememberPointer(evt)
+      if (!DEBUG_CONTEXT_MENU) return
+      console.log('[ctx-debug] native mousedown', {
+        button: evt.button,
+        x: evt.clientX,
+        y: evt.clientY
+      })
+    }
+    const nativeMouseMoveTracker = (evt: MouseEvent) => {
+      rememberPointer(evt)
+    }
+    upperCanvasEl?.addEventListener('contextmenu', nativeContextMenuLogger)
+    upperCanvasEl?.addEventListener('mousedown', nativeMouseDownLogger)
+    upperCanvasEl?.addEventListener('mousemove', nativeMouseMoveTracker)
 
     const handleResize = () => {
       canvas.setDimensions({ width: window.innerWidth, height: window.innerHeight })
@@ -348,6 +392,9 @@ export function InfiniteCanvas() {
 
     return () => {
       window.removeEventListener('resize', handleResize)
+      upperCanvasEl?.removeEventListener('contextmenu', nativeContextMenuLogger)
+      upperCanvasEl?.removeEventListener('mousedown', nativeMouseDownLogger)
+      upperCanvasEl?.removeEventListener('mousemove', nativeMouseMoveTracker)
       canvas.dispose()
       fabricRef.current = null
     }
@@ -1006,22 +1053,64 @@ export function InfiniteCanvas() {
     const onMouseDown = (opt: { e: TPointerEvent; target?: FabricObject }) => {
       const e = opt.e as unknown as MouseEvent
       const target = opt.target as any
+      if (DEBUG_CONTEXT_MENU) {
+        console.log('[ctx-debug] fabric mouse:down', {
+          button: e.button,
+          hasTarget: Boolean(target),
+          targetType: target?.type,
+          targetData: target?.data
+        })
+      }
       if (target?.data?.isCardImageDelete) {
         removeImageFromCard(target.data.cardId, target.data.imageId)
         useCanvasStore.getState().setDirty(true)
         return
       }
       if (e.button === 2) {
-        if (!opt.target) return
-        const id = (opt.target as any).data?.id
-        if (!id) return
+        const id = (opt.target as any)?.data?.id || (opt.target as any)?.data?.cardId
+        if (DEBUG_CONTEXT_MENU) {
+          console.log('[ctx-debug] right click target resolved', {
+            rawData: (opt.target as any)?.data,
+            resolvedId: id
+          })
+        }
+        if (!id) {
+          setContextMenu({
+            x: e.clientX,
+            y: e.clientY,
+            elementId: null,
+            isLocked: false
+          })
+          return
+        }
+
         const element = useElementsStore.getState().getElement(id)
+        if (DEBUG_CONTEXT_MENU) {
+          console.log('[ctx-debug] element lookup', {
+            id,
+            found: Boolean(element)
+          })
+        }
         if (element) {
+          if (DEBUG_CONTEXT_MENU) {
+            console.log('[ctx-debug] setContextMenu', {
+              x: e.clientX,
+              y: e.clientY,
+              id: element.id
+            })
+          }
           setContextMenu({
             x: e.clientX,
             y: e.clientY,
             elementId: id,
             isLocked: element.locked
+          })
+        } else {
+          setContextMenu({
+            x: e.clientX,
+            y: e.clientY,
+            elementId: null,
+            isLocked: false
           })
         }
       }
@@ -1234,33 +1323,140 @@ export function InfiniteCanvas() {
     useElementsStore.getState().setSelected(cardId)
   }, [])
 
+  const copyCardToClipboard = useCallback((cardId: string | null | undefined) => {
+    if (!cardId) return false
+    const element = useElementsStore.getState().getElement(cardId)
+    if (!element || element.type !== 'card') return false
+
+    const card = element as CardElement
+    copiedCardRef.current = {
+      ...card,
+      position: { ...card.position },
+      size: { ...card.size },
+      images: card.images.map((image) => ({ ...image }))
+    }
+    pasteCountRef.current = 0
+    setHasCopiedCard(true)
+    return true
+  }, [])
+
+  const resolveScenePositionFromClient = useCallback((clientPoint?: { x: number; y: number } | null) => {
+    if (!clientPoint) return null
+    const canvas = fabricRef.current
+    if (!canvas) return null
+
+    try {
+      const scene = canvas.getScenePoint({
+        clientX: clientPoint.x,
+        clientY: clientPoint.y
+      } as unknown as MouseEvent)
+      if (Number.isFinite(scene.x) && Number.isFinite(scene.y)) {
+        return { x: scene.x, y: scene.y }
+      }
+    } catch {
+      // Fall through to a viewport-transform approximation.
+    }
+
+    const vpt = canvas.viewportTransform
+    const zoom = canvas.getZoom() || 1
+    if (vpt && Number.isFinite(vpt[4]) && Number.isFinite(vpt[5])) {
+      return {
+        x: (clientPoint.x - vpt[4]) / zoom,
+        y: (clientPoint.y - vpt[5]) / zoom
+      }
+    }
+
+    return { x: clientPoint.x, y: clientPoint.y }
+  }, [])
+
+  const pasteCardFromClipboard = useCallback((
+    anchorCardId?: string | null,
+    pasteClientPoint?: { x: number; y: number } | null
+  ) => {
+    const copied = copiedCardRef.current
+    if (!copied) return false
+
+    let basePosition = copied.position
+    const pointerScenePosition = resolveScenePositionFromClient(pasteClientPoint ?? lastPointerClientRef.current)
+    if (pointerScenePosition) {
+      basePosition = pointerScenePosition
+    } else if (anchorCardId) {
+      const anchor = useElementsStore.getState().getElement(anchorCardId)
+      if (anchor && anchor.type === 'card') {
+        basePosition = anchor.position
+      }
+    }
+
+    pasteCountRef.current += 1
+    const offsetStep = 24
+    const offset = offsetStep * pasteCountRef.current
+    const now = new Date().toISOString()
+    const pastedCard: Omit<CardElement, 'id'> = {
+      ...copied,
+      position: {
+        x: basePosition.x + offset,
+        y: basePosition.y + offset
+      },
+      images: copied.images.map((image) => ({
+        ...image,
+        id: crypto.randomUUID()
+      })),
+      createdAt: now,
+      updatedAt: now
+    }
+
+    const newId = useElementsStore.getState().addElement(pastedCard)
+    useElementsStore.getState().setSelected(newId)
+    useCanvasStore.getState().setDirty(true)
+    return true
+  }, [resolveScenePositionFromClient])
+
   // Context menu handlers
   const handleContextDelete = () => {
-    if (contextMenu) {
+    if (contextMenu?.elementId) {
       useElementsStore.getState().removeElement(contextMenu.elementId)
     }
   }
 
-  const handleContextDuplicate = () => {
-    if (contextMenu) {
-      useElementsStore.getState().duplicateElement(contextMenu.elementId)
+  const handleContextCopy = () => {
+    if (contextMenu?.elementId) {
+      copyCardToClipboard(contextMenu.elementId)
     }
   }
 
+  const handleContextPaste = () => {
+    pasteCardFromClipboard(
+      contextMenu?.elementId,
+      contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null
+    )
+  }
+
   const handleContextBringToFront = () => {
-    if (contextMenu) {
+    if (contextMenu?.elementId) {
       useElementsStore.getState().bringToFront(contextMenu.elementId)
     }
   }
 
+  const handleContextBringForward = () => {
+    if (contextMenu?.elementId) {
+      useElementsStore.getState().bringForward(contextMenu.elementId)
+    }
+  }
+
+  const handleContextSendBackward = () => {
+    if (contextMenu?.elementId) {
+      useElementsStore.getState().sendBackward(contextMenu.elementId)
+    }
+  }
+
   const handleContextSendToBack = () => {
-    if (contextMenu) {
+    if (contextMenu?.elementId) {
       useElementsStore.getState().sendToBack(contextMenu.elementId)
     }
   }
 
   const handleContextLock = () => {
-    if (contextMenu) {
+    if (contextMenu?.elementId) {
       const element = useElementsStore.getState().getElement(contextMenu.elementId)
       if (element?.locked) {
         useElementsStore.getState().unlockElement(contextMenu.elementId)
@@ -1273,13 +1469,14 @@ export function InfiniteCanvas() {
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      const tagName = target?.tagName?.toLowerCase()
+      const isNativeTextInput =
+        tagName === 'input' ||
+        tagName === 'textarea' ||
+        Boolean(target?.isContentEditable)
+
       if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'a' || e.code === 'KeyA')) {
-        const target = e.target as HTMLElement | null
-        const tagName = target?.tagName?.toLowerCase()
-        const isNativeTextInput =
-          tagName === 'input' ||
-          tagName === 'textarea' ||
-          Boolean(target?.isContentEditable)
         const isFabricHiddenTextarea =
           tagName === 'textarea' && (
             target?.classList?.contains('hiddenTextarea') ||
@@ -1297,6 +1494,21 @@ export function InfiniteCanvas() {
       if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
         e.preventDefault()
         useSearchStore.getState().open()
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+        if (!isNativeTextInput && !isEditingCardIdRef.current) {
+          const selectedId = useElementsStore.getState().selectedId
+          if (selectedId) {
+            e.preventDefault()
+            copyCardToClipboard(selectedId)
+          }
+        }
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+        if (!isNativeTextInput && !isEditingCardIdRef.current && hasCopiedCard) {
+          e.preventDefault()
+          pasteCardFromClipboard()
+        }
       }
       if (e.key === 'Escape') {
         useSearchStore.getState().close()
@@ -1342,7 +1554,7 @@ export function InfiniteCanvas() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isEditingCardId, cancelEditingCard])
+  }, [isEditingCardId, cancelEditingCard, copyCardToClipboard, pasteCardFromClipboard, hasCopiedCard])
 
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
@@ -1431,8 +1643,13 @@ export function InfiniteCanvas() {
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
           onDelete={handleContextDelete}
-          onDuplicate={handleContextDuplicate}
+          onCopy={handleContextCopy}
+          onPaste={handleContextPaste}
+          canPaste={hasCopiedCard}
+          showCardActions={Boolean(contextMenu.elementId)}
           onBringToFront={handleContextBringToFront}
+          onBringForward={handleContextBringForward}
+          onSendBackward={handleContextSendBackward}
           onSendToBack={handleContextSendToBack}
           onLock={handleContextLock}
           isLocked={contextMenu.isLocked}

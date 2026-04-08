@@ -15,6 +15,8 @@ interface ElementsState {
   setEditingCard: (id: string | null) => void
   getElement: (id: string) => CanvasElement | undefined
   bringToFront: (id: string) => void
+  bringForward: (id: string) => void
+  sendBackward: (id: string) => void
   sendToBack: (id: string) => void
   duplicateElement: (id: string) => string | null
   lockElement: (id: string) => void
@@ -65,6 +67,30 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
       if (idx !== -1) {
         const [element] = elements.splice(idx, 1)
         elements.push(element)
+      }
+      return { elements }
+    })
+  },
+
+  bringForward: (id) => {
+    set((state) => {
+      const elements = [...state.elements]
+      const idx = elements.findIndex((el) => el.id === id)
+      if (idx !== -1 && idx < elements.length - 1) {
+        const [element] = elements.splice(idx, 1)
+        elements.splice(idx + 1, 0, element)
+      }
+      return { elements }
+    })
+  },
+
+  sendBackward: (id) => {
+    set((state) => {
+      const elements = [...state.elements]
+      const idx = elements.findIndex((el) => el.id === id)
+      if (idx > 0) {
+        const [element] = elements.splice(idx, 1)
+        elements.splice(idx - 1, 0, element)
       }
       return { elements }
     })
