@@ -1350,7 +1350,20 @@ export function InfiniteCanvas() {
       if (!editingCardId || !e.clipboardData) return
 
       const imageItem = Array.from(e.clipboardData.items).find((item) => item.type.startsWith('image/'))
-      if (!imageItem) return
+      if (!imageItem) {
+        const target = e.target as HTMLTextAreaElement | null
+        if (!target || target.tagName !== 'TEXTAREA' || !target.classList.contains('hiddenTextarea')) return
+
+        const plainText = e.clipboardData.getData('text/plain')
+        if (!plainText) return
+
+        e.preventDefault()
+        const selectionStart = target.selectionStart ?? target.value.length
+        const selectionEnd = target.selectionEnd ?? selectionStart
+        target.setRangeText(plainText, selectionStart, selectionEnd, 'end')
+        target.dispatchEvent(new Event('input', { bubbles: true }))
+        return
+      }
 
       const file = imageItem.getAsFile()
       if (!file) return

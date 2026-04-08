@@ -77,10 +77,9 @@ export function renderCard(
     ;(titleText as any).data = { cardId: id, isTitle: true }
   }
 
-  // Content - strip HTML for display and use ltr direction
+  // Content is treated as plain text so XML/HTML-like snippets are preserved verbatim.
   // Independent object that won't scale with the card
-  const plainText = content ? content.replace(/<[^>]*>/g, '') : ''
-  const displayContent = plainText || 'Double-click to edit'
+  const displayContent = content || 'Double-click to edit'
   const contentText = new Textbox(displayContent, {
     width: size.width - 20,
     fontSize: 13,
