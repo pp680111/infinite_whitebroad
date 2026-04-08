@@ -5,13 +5,13 @@ import { useElementsStore } from '../../stores/elementsStore'
 import { useCanvasStore } from '../../stores/canvasStore'
 import { useToolStore } from '../../stores/toolStore'
 import { useSearchStore } from '../../stores/searchStore'
-import { useHistoryStore } from '../../stores/historyStore'
+import { useHistoryStore, Command } from '../../stores/historyStore'
 import { renderCard, CardRenderResult } from './renderCard'
 import { Toolbar } from '../Toolbar/Toolbar'
 import { ContextMenu } from '../ContextMenu/ContextMenu'
 import { SearchPanel } from '../SearchPanel/SearchPanel'
 import { ZoomControl } from '../ZoomControl/ZoomControl'
-import { CardElement } from '../../types/card'
+import { CardElement, CanvasElement } from '../../types/card'
 
 const DEBUG_CONTEXT_MENU = false
 
@@ -25,6 +25,7 @@ export function InfiniteCanvas() {
   const skipNextSyncRef = useRef(false)
   const ignoreNextEditMouseDownRef = useRef(false)
   const handlingObjectModifiedRef = useRef(false)
+  const isApplyingHistoryRef = useRef(false)
   const isPointerTransformingRef = useRef(false)
   const hoveredCardIdRef = useRef<string | null>(null)
   const activeSelectionDragSessionRef = useRef<{
@@ -147,6 +148,78 @@ export function InfiniteCanvas() {
       totalDy: 0
     }
   }, [getDragAnchorPoint])
+  const cloneElement = useCallback(<T,>(value: T): T => {
+    if (typeof structuredClone === 'function') {
+      return structuredClone(value)
+    }
+    return JSON.parse(JSON.stringify(value)) as T
+  }, [])
+  const applyCommandUndo = useCallback((command: Command) => {
+    const elementsStore = useElementsStore.getState()
+    if (command.type === 'update' && command.elementId && command.previousState) {
+      elementsStore.updateElement(command.elementId, command.previousState as any)
+      useCanvasStore.getState().setDirty(true)
+      return
+    }
+    if (command.type === 'delete' && command.previousState) {
+      const restoredElement = cloneElement(command.previousState as CanvasElement)
+      elementsStore.insertElement(restoredElement)
+      if (restoredElement.id) {
+        elementsStore.setSelected(restoredElement.id)
+      }
+      useCanvasStore.getState().setDirty(true)
+      return
+    }
+    if (command.type === 'create' && command.elementId) {
+      elementsStore.removeElement(command.elementId)
+      useCanvasStore.getState().setDirty(true)
+    }
+  }, [cloneElement])
+  const applyCommandRedo = useCallback((command: Command) => {
+    const elementsStore = useElementsStore.getState()
+    if (command.type === 'update' && command.elementId && command.newState) {
+      elementsStore.updateElement(command.elementId, command.newState as any)
+      useCanvasStore.getState().setDirty(true)
+      return
+    }
+    if (command.type === 'delete' && command.previousState) {
+      const deletedId = command.previousState.id || command.elementId
+      if (!deletedId) return
+      elementsStore.removeElement(deletedId)
+      useCanvasStore.getState().setDirty(true)
+      return
+    }
+    if (command.type === 'create' && command.previousState) {
+      const recreatedElement = cloneElement(command.previousState as CanvasElement)
+      elementsStore.insertElement(recreatedElement)
+      if (recreatedElement.id) {
+        elementsStore.setSelected(recreatedElement.id)
+      }
+      useCanvasStore.getState().setDirty(true)
+    }
+  }, [cloneElement])
+  const executeUndo = useCallback(() => {
+    const command = useHistoryStore.getState().undo()
+    if (!command) return
+    isApplyingHistoryRef.current = true
+    try {
+      applyCommandUndo(command)
+      skipNextSyncRef.current = false
+    } finally {
+      isApplyingHistoryRef.current = false
+    }
+  }, [applyCommandUndo])
+  const executeRedo = useCallback(() => {
+    const command = useHistoryStore.getState().redo()
+    if (!command) return
+    isApplyingHistoryRef.current = true
+    try {
+      applyCommandRedo(command)
+      skipNextSyncRef.current = false
+    } finally {
+      isApplyingHistoryRef.current = false
+    }
+  }, [applyCommandRedo])
   const layoutCardObjects = useCallback((
     cardId: string,
     options?: { fitTextWidth?: boolean; resizeHeight?: boolean; recalculateText?: boolean },
@@ -747,8 +820,24 @@ export function InfiniteCanvas() {
           }
 
           if (Object.keys(updates).length > 0) {
+            const previousState: Record<string, any> = {}
+            const newState: Record<string, any> = {}
+            for (const key of Object.keys(updates)) {
+              previousState[key] = (currentElement as any)[key]
+              newState[key] = updates[key]
+            }
             updates.updatedAt = new Date().toISOString()
+            previousState.updatedAt = currentElement.updatedAt
+            newState.updatedAt = updates.updatedAt
             useElementsStore.getState().updateElement(cardId, updates as any)
+            if (!isApplyingHistoryRef.current) {
+              useHistoryStore.getState().pushCommand({
+                type: 'update',
+                elementId: cardId,
+                previousState: cloneElement(previousState),
+                newState: cloneElement(newState)
+              })
+            }
             hasAnyUpdate = true
           }
         }
@@ -792,6 +881,7 @@ export function InfiniteCanvas() {
       canvas.off('mouse:up', handleMouseUp as any)
     }
   }, [
+    cloneElement,
     createActiveSelectionDragSession,
     getDragAnchorPoint,
     getCardBounds,
@@ -849,6 +939,39 @@ export function InfiniteCanvas() {
       canvas.off('mouse:move', handleHover as any)
     }
   }, [currentTool])
+
+  const updateCardWithHistory = useCallback((cardId: string, updates: Record<string, any>) => {
+    const currentElement = useElementsStore.getState().getElement(cardId)
+    if (!currentElement || currentElement.type !== 'card') return
+
+    let hasChanges = false
+    const previousState: Record<string, any> = {}
+    const newState: Record<string, any> = {}
+    for (const key of Object.keys(updates)) {
+      const previousValue = (currentElement as any)[key]
+      const nextValue = updates[key]
+      const isSame =
+        typeof previousValue === 'object' || typeof nextValue === 'object'
+          ? JSON.stringify(previousValue) === JSON.stringify(nextValue)
+          : previousValue === nextValue
+      if (!isSame) {
+        previousState[key] = previousValue
+        newState[key] = nextValue
+        hasChanges = true
+      }
+    }
+    if (!hasChanges) return
+
+    useElementsStore.getState().updateElement(cardId, updates as any)
+    if (!isApplyingHistoryRef.current) {
+      useHistoryStore.getState().pushCommand({
+        type: 'update',
+        elementId: cardId,
+        previousState: cloneElement(previousState),
+        newState: cloneElement(newState)
+      })
+    }
+  }, [cloneElement])
 
   useEffect(() => {
     const canvas = fabricRef.current
@@ -908,7 +1031,15 @@ export function InfiniteCanvas() {
     const handleDblClick = (opt: { e: TPointerEvent; target?: FabricObject }) => {
       if (currentTool === 'card') {
         const scenePoint = canvas.getScenePoint(opt.e)
-        addCard(scenePoint.x, scenePoint.y)
+        const createdId = addCard(scenePoint.x, scenePoint.y)
+        const createdElement = useElementsStore.getState().getElement(createdId)
+        if (createdElement && !isApplyingHistoryRef.current) {
+          useHistoryStore.getState().pushCommand({
+            type: 'create',
+            elementId: createdId,
+            previousState: cloneElement(createdElement)
+          })
+        }
         setTool('select')
         return
       }
@@ -968,7 +1099,7 @@ export function InfiniteCanvas() {
             const content = fitted ? fitted.content : (contentTextbox?.text || '')
 
             // Save to store
-            useElementsStore.getState().updateElement(editingCardId, {
+            updateCardWithHistory(editingCardId, {
               title,
               content,
               ...(fitted ? { size: fitted.size } : {}),
@@ -994,13 +1125,21 @@ export function InfiniteCanvas() {
         }
 
         const scenePoint = canvas.getScenePoint(opt.e)
-        addCard(scenePoint.x, scenePoint.y)
+        const createdId = addCard(scenePoint.x, scenePoint.y)
+        const createdElement = useElementsStore.getState().getElement(createdId)
+        if (createdElement && !isApplyingHistoryRef.current) {
+          useHistoryStore.getState().pushCommand({
+            type: 'create',
+            elementId: createdId,
+            previousState: cloneElement(createdElement)
+          })
+        }
       }
     }
 
     canvas.on('mouse:dblclick', handleDblClick)
     return () => { canvas.off('mouse:dblclick', handleDblClick) }
-  }, [currentTool, addCard, findCardTextboxes, setTool, syncElementsToCanvas])
+  }, [cloneElement, currentTool, addCard, findCardTextboxes, setTool, syncElementsToCanvas, updateCardWithHistory])
 
   // Handle selection
   useEffect(() => {
@@ -1126,7 +1265,7 @@ export function InfiniteCanvas() {
       const fitted = fitCardToText(isEditingCardId)
 
       // Save text content to store
-      useElementsStore.getState().updateElement(isEditingCardId, {
+      updateCardWithHistory(isEditingCardId, {
         title: fitted ? fitted.title : texts.title,
         content: fitted ? fitted.content : texts.content,
         ...(fitted ? { size: fitted.size } : {}),
@@ -1150,7 +1289,7 @@ export function InfiniteCanvas() {
       useElementsStore.getState().setEditingCard(null)
       useCanvasStore.getState().setDirty(true)
     }
-  }, [findCardTextboxes, fitCardToText, isEditingCardId])
+  }, [findCardTextboxes, fitCardToText, isEditingCardId, updateCardWithHistory])
 
   const cancelEditingCard = useCallback(() => {
     // Disable editing on the textboxes without re-rendering
@@ -1201,7 +1340,7 @@ export function InfiniteCanvas() {
       const content = fitted ? fitted.content : (contentTextbox?.text || '')
 
       // Always save when editing exits, regardless of what was clicked
-      useElementsStore.getState().updateElement(currentEditingId, {
+      updateCardWithHistory(currentEditingId, {
         title,
         content,
         ...(fitted ? { size: fitted.size } : {}),
@@ -1253,7 +1392,7 @@ export function InfiniteCanvas() {
       const content = fitted ? fitted.content : (contentTextbox?.text || '')
 
       // Save content to store
-      useElementsStore.getState().updateElement(currentEditingId, {
+      updateCardWithHistory(currentEditingId, {
         title,
         content,
         ...(fitted ? { size: fitted.size } : {}),
@@ -1286,7 +1425,7 @@ export function InfiniteCanvas() {
       ;(canvas.off as any)('textbox:editing:exited', handleEditingExited)
       ;(canvas.off as any)('mouse:down', handleMouseDown)
     }
-  }, [findCardTextboxes, fitCardToText, isEditingCardId, saveEditingCard])
+  }, [findCardTextboxes, fitCardToText, isEditingCardId, saveEditingCard, updateCardWithHistory])
 
   // Navigate canvas to show a specific card
   const navigateToCard = useCallback((cardId: string) => {
@@ -1406,15 +1545,32 @@ export function InfiniteCanvas() {
     }
 
     const newId = useElementsStore.getState().addElement(pastedCard)
+    const createdElement = useElementsStore.getState().getElement(newId)
+    if (createdElement && !isApplyingHistoryRef.current) {
+      useHistoryStore.getState().pushCommand({
+        type: 'create',
+        elementId: newId,
+        previousState: cloneElement(createdElement)
+      })
+    }
     useElementsStore.getState().setSelected(newId)
     useCanvasStore.getState().setDirty(true)
     return true
-  }, [resolveScenePositionFromClient])
+  }, [cloneElement, resolveScenePositionFromClient])
 
   // Context menu handlers
   const handleContextDelete = () => {
     if (contextMenu?.elementId) {
+      const targetElement = useElementsStore.getState().getElement(contextMenu.elementId)
       useElementsStore.getState().removeElement(contextMenu.elementId)
+      if (targetElement && !isApplyingHistoryRef.current) {
+        useHistoryStore.getState().pushCommand({
+          type: 'delete',
+          elementId: contextMenu.elementId,
+          previousState: cloneElement(targetElement)
+        })
+      }
+      useCanvasStore.getState().setDirty(true)
     }
   }
 
@@ -1517,44 +1673,52 @@ export function InfiniteCanvas() {
       if (e.key === 'Delete' && !isEditingCardId) {
         const selectedId = useElementsStore.getState().selectedId
         if (selectedId) {
+          const targetElement = useElementsStore.getState().getElement(selectedId)
           useElementsStore.getState().removeElement(selectedId)
+          if (targetElement && !isApplyingHistoryRef.current) {
+            useHistoryStore.getState().pushCommand({
+              type: 'delete',
+              elementId: selectedId,
+              previousState: cloneElement(targetElement)
+            })
+          }
+          useCanvasStore.getState().setDirty(true)
         }
       }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
         e.preventDefault()
-        const command = useHistoryStore.getState().undo()
-        if (!command) return
-        if (command.type === 'update' && command.elementId && command.previousState) {
-          useElementsStore.getState().updateElement(command.elementId, command.previousState as any)
-        } else if (command.type === 'delete' && command.elementId && command.previousState) {
-          useElementsStore.getState().addElement(command.previousState as any)
-        } else if (command.type === 'create' && command.elementId) {
-          useElementsStore.getState().removeElement(command.elementId)
-        }
+        executeUndo()
       }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))
+      ) {
         e.preventDefault()
-        const command = useHistoryStore.getState().redo()
-        if (!command) return
-        if (command.type === 'update' && command.elementId && command.newState) {
-          useElementsStore.getState().updateElement(command.elementId, command.newState as any)
-        } else if (command.type === 'delete' && command.elementId) {
-          useElementsStore.getState().removeElement(command.elementId)
-        } else if (command.type === 'create' && command.elementId && command.previousState) {
-          useElementsStore.getState().addElement(command.previousState as any)
-        }
+        executeRedo()
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
         e.preventDefault()
         const selectedId = useElementsStore.getState().selectedId
         if (selectedId) {
-          useElementsStore.getState().duplicateElement(selectedId)
+          const newId = useElementsStore.getState().duplicateElement(selectedId)
+          if (newId) {
+            const duplicated = useElementsStore.getState().getElement(newId)
+            if (duplicated && !isApplyingHistoryRef.current) {
+              useHistoryStore.getState().pushCommand({
+                type: 'create',
+                elementId: newId,
+                previousState: cloneElement(duplicated)
+              })
+            }
+            useElementsStore.getState().setSelected(newId)
+            useCanvasStore.getState().setDirty(true)
+          }
         }
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isEditingCardId, cancelEditingCard, copyCardToClipboard, pasteCardFromClipboard, hasCopiedCard])
+  }, [cloneElement, isEditingCardId, cancelEditingCard, copyCardToClipboard, pasteCardFromClipboard, hasCopiedCard, executeUndo, executeRedo])
 
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
@@ -1610,6 +1774,22 @@ export function InfiniteCanvas() {
       open: () => loadDocument(),
       save: () => saveDocument(),
       saveAs: () => saveDocumentAs(),
+      undo: () => executeUndo(),
+      redo: () => executeRedo(),
+      delete: () => {
+        const selectedId = useElementsStore.getState().selectedId
+        if (!selectedId) return
+        const targetElement = useElementsStore.getState().getElement(selectedId)
+        useElementsStore.getState().removeElement(selectedId)
+        if (targetElement && !isApplyingHistoryRef.current) {
+          useHistoryStore.getState().pushCommand({
+            type: 'delete',
+            elementId: selectedId,
+            previousState: cloneElement(targetElement)
+          })
+        }
+        useCanvasStore.getState().setDirty(true)
+      },
       search: () => useSearchStore.getState().open(),
       zoomIn: () => zoomIn(),
       zoomOut: () => zoomOut(),
@@ -1622,11 +1802,14 @@ export function InfiniteCanvas() {
     api.onMenuOpen(() => handlers.open())
     api.onMenuSave(() => handlers.save())
     api.onMenuSaveAs(() => handlers.saveAs())
+    api.onMenuUndo(() => handlers.undo())
+    api.onMenuRedo(() => handlers.redo())
+    api.onMenuDelete(() => handlers.delete())
     api.onMenuSearch(() => handlers.search())
     api.onMenuZoomIn(() => handlers.zoomIn())
     api.onMenuZoomOut(() => handlers.zoomOut())
     api.onMenuZoomReset(() => handlers.zoomReset())
-  }, [])
+  }, [cloneElement, executeRedo, executeUndo, loadDocument, newDocument, resetZoom, saveDocument, saveDocumentAs, zoomIn, zoomOut])
 
   return (
     <div ref={containerRef} className="w-full h-full relative overflow-hidden">

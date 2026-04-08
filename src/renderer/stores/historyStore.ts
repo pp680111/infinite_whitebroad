@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { CanvasElement } from '../types/card'
 
-interface Command {
+export interface Command {
   type: string
   elementId?: string
   previousState?: Partial<CanvasElement>

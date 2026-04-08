@@ -9,6 +9,7 @@ interface ElementsState {
   selectedId: string | null
   editingCardId: string | null
   addElement: (element: NewElement) => string
+  insertElement: (element: CanvasElement) => void
   updateElement: (id: string, updates: Partial<CanvasElement>) => void
   removeElement: (id: string) => void
   setSelected: (id: string | null) => void
@@ -36,6 +37,18 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     const newElement = { ...element, id } as CanvasElement
     set((state) => ({ elements: [...state.elements, newElement] }))
     return id
+  },
+
+  insertElement: (element) => {
+    set((state) => {
+      const hasExisting = state.elements.some((el) => el.id === element.id)
+      if (hasExisting) {
+        return {
+          elements: state.elements.map((el) => (el.id === element.id ? element : el))
+        }
+      }
+      return { elements: [...state.elements, element] }
+    })
   },
 
   updateElement: (id, updates) => {

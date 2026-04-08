@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { useElementsStore } from './elementsStore'
+import { useHistoryStore } from './historyStore'
 import { CanvasElement, CardElement } from '../types/card'
 
 interface CanvasState {
@@ -29,7 +30,7 @@ interface CanvasState {
     canvasState: { elements: CanvasElement[] }
     searchIndex: string[]
   }
-  addCard: (x: number, y: number) => void
+  addCard: (x: number, y: number) => string
 }
 
 type LoadedDocumentData = {
@@ -45,10 +46,11 @@ function hydrateDocument(
   filePath: string | null,
   set: (partial: Partial<CanvasState>) => void
 ) {
+  useHistoryStore.getState().clear()
   useElementsStore.getState().clear()
   if (data.canvasState?.elements) {
     data.canvasState.elements.forEach((el) => {
-      useElementsStore.getState().addElement(el)
+      useElementsStore.getState().insertElement(el)
     })
   }
 
@@ -74,6 +76,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       void window.electronAPI.file.delete(autoSavePath)
     }
 
+    useHistoryStore.getState().clear()
     useElementsStore.getState().clear()
     set({
       documentName: DEFAULT_DOCUMENT_NAME,
@@ -235,5 +238,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     useElementsStore.getState().setSelected(id)
     useElementsStore.getState().setEditingCard(id)
     set({ isDirty: true })
+    return id
   }
 }))
