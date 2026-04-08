@@ -16,6 +16,13 @@ import { CardElement, CanvasElement } from '../../types/card'
 const DEBUG_CONTEXT_MENU = false
 
 export function InfiniteCanvas() {
+  type CardObjectRefs = {
+    cardObject?: any
+    titleText?: any
+    contentText?: any
+    imageObjects: any[]
+    imageDeleteButtons: any[]
+  }
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<FabricCanvas | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -28,12 +35,18 @@ export function InfiniteCanvas() {
   const isApplyingHistoryRef = useRef(false)
   const isPointerTransformingRef = useRef(false)
   const hoveredCardIdRef = useRef<string | null>(null)
+  const cardObjectIndexRef = useRef<Map<string, CardObjectRefs>>(new Map())
   const activeSelectionDragSessionRef = useRef<{
     target: any
     cardIds: Set<string>
     previousPoint: { x: number; y: number }
     totalDx: number
     totalDy: number
+  } | null>(null)
+  const singleCardDragSessionRef = useRef<{
+    target: any
+    cardId: string
+    previousPoint: { x: number; y: number }
   } | null>(null)
   const [zoom, setZoom] = useState(100)
   const [isEditingCardId, setIsEditingCardId] = useState<string | null>(null)
@@ -63,6 +76,104 @@ export function InfiniteCanvas() {
   } = useCanvasStore()
   const addImageToCard = useElementsStore((s) => s.addImageToCard)
   const removeImageFromCard = useElementsStore((s) => s.removeImageFromCard)
+  const clearCardObjectIndex = useCallback(() => {
+    cardObjectIndexRef.current.clear()
+  }, [])
+  const getOrCreateCardRefs = useCallback((cardId: string): CardObjectRefs => {
+    const existing = cardObjectIndexRef.current.get(cardId)
+    if (existing) return existing
+    const created: CardObjectRefs = {
+      imageObjects: [],
+      imageDeleteButtons: []
+    }
+    cardObjectIndexRef.current.set(cardId, created)
+    return created
+  }, [])
+  const registerCanvasObject = useCallback((obj: any) => {
+    if (!obj) return
+    const data = obj.data
+    if (!data) return
+
+    if (data.type === 'card' && typeof data.id === 'string') {
+      const refs = getOrCreateCardRefs(data.id)
+      refs.cardObject = obj
+      return
+    }
+
+    if (typeof data.cardId !== 'string') return
+    const refs = getOrCreateCardRefs(data.cardId)
+    if (data.isTitle) {
+      refs.titleText = obj
+      return
+    }
+    if (data.isContent) {
+      refs.contentText = obj
+      return
+    }
+    if (data.isCardImage) {
+      if (!refs.imageObjects.includes(obj)) refs.imageObjects.push(obj)
+      return
+    }
+    if (data.isCardImageDelete) {
+      if (!refs.imageDeleteButtons.includes(obj)) refs.imageDeleteButtons.push(obj)
+    }
+  }, [getOrCreateCardRefs])
+  const unregisterCanvasObject = useCallback((obj: any) => {
+    if (!obj) return
+    const data = obj.data
+    if (!data) return
+
+    const cardId =
+      typeof data.id === 'string' && data.type === 'card'
+        ? data.id
+        : typeof data.cardId === 'string'
+          ? data.cardId
+          : null
+    if (!cardId) return
+
+    const refs = cardObjectIndexRef.current.get(cardId)
+    if (!refs) return
+
+    if (data.type === 'card' && refs.cardObject === obj) refs.cardObject = undefined
+    if (data.isTitle && refs.titleText === obj) refs.titleText = undefined
+    if (data.isContent && refs.contentText === obj) refs.contentText = undefined
+    if (data.isCardImage) refs.imageObjects = refs.imageObjects.filter((entry) => entry !== obj)
+    if (data.isCardImageDelete) refs.imageDeleteButtons = refs.imageDeleteButtons.filter((entry) => entry !== obj)
+
+    if (
+      !refs.cardObject &&
+      !refs.titleText &&
+      !refs.contentText &&
+      refs.imageObjects.length === 0 &&
+      refs.imageDeleteButtons.length === 0
+    ) {
+      cardObjectIndexRef.current.delete(cardId)
+    }
+  }, [])
+  const ensureCardRefs = useCallback((cardId: string): CardObjectRefs | null => {
+    const canvas = fabricRef.current
+    if (!canvas) return null
+
+    let refs = cardObjectIndexRef.current.get(cardId)
+    if (refs?.cardObject && refs?.contentText) {
+      return refs
+    }
+
+    const objects = canvas.getObjects()
+    for (const obj of objects) {
+      const o = obj as any
+      if (o.data?.id === cardId && o.data?.type === 'card') {
+        registerCanvasObject(o)
+        continue
+      }
+      if (o.data?.cardId === cardId) {
+        registerCanvasObject(o)
+      }
+    }
+
+    refs = cardObjectIndexRef.current.get(cardId)
+    return refs ?? null
+  }, [registerCanvasObject])
   const isActiveSelectionType = useCallback((value: unknown) => {
     return typeof value === 'string' && value.toLowerCase() === 'activeselection'
   }, [])
@@ -148,6 +259,29 @@ export function InfiniteCanvas() {
       totalDy: 0
     }
   }, [getDragAnchorPoint])
+  const moveCardLinkedObjectsByDelta = useCallback((cardId: string, dx: number, dy: number) => {
+    if (!Number.isFinite(dx) || !Number.isFinite(dy) || (dx === 0 && dy === 0)) return
+    const refs = ensureCardRefs(cardId)
+    if (!refs) return
+
+    const linkedObjects = [
+      refs.titleText,
+      refs.contentText,
+      ...refs.imageObjects,
+      ...refs.imageDeleteButtons
+    ].filter(Boolean)
+
+    for (const obj of linkedObjects) {
+      const nextLeft = (typeof obj.left === 'number' ? obj.left : 0) + dx
+      const nextTop = (typeof obj.top === 'number' ? obj.top : 0) + dy
+      if (!Number.isFinite(nextLeft) || !Number.isFinite(nextTop)) continue
+      obj.set({
+        left: nextLeft,
+        top: nextTop
+      })
+      obj.setCoords()
+    }
+  }, [ensureCardRefs])
   const cloneElement = useCallback(<T,>(value: T): T => {
     if (typeof structuredClone === 'function') {
       return structuredClone(value)
@@ -222,36 +356,19 @@ export function InfiniteCanvas() {
   }, [applyCommandRedo])
   const layoutCardObjects = useCallback((
     cardId: string,
-    options?: { fitTextWidth?: boolean; resizeHeight?: boolean; recalculateText?: boolean },
+    options?: { fitTextWidth?: boolean; resizeHeight?: boolean; recalculateText?: boolean; render?: boolean },
     overrideCardObject?: any,
     overrideBounds?: { left: number; top: number; width: number; height: number }
   ) => {
     const canvas = fabricRef.current
     if (!canvas) return null
 
-    const objects = canvas.getObjects()
-    let cardObject: any = undefined
-    let titleText: any = undefined
-    let contentText: any = undefined
-    const imageObjects: any[] = []
-    const imageDeleteButtons: any[] = []
-
-    for (const obj of objects) {
-      const o = obj as any
-      if (o.data?.id === cardId && o.data?.type === 'card') {
-        cardObject = o
-      } else if (o.data?.cardId === cardId) {
-        if (o.data?.isTitle) {
-          titleText = o
-        } else if (o.data?.isContent) {
-          contentText = o
-        } else if (o.data?.isCardImage) {
-          imageObjects.push(o)
-        } else if (o.data?.isCardImageDelete) {
-          imageDeleteButtons.push(o)
-        }
-      }
-    }
+    const refs = ensureCardRefs(cardId)
+    let cardObject: any = refs?.cardObject
+    let titleText: any = refs?.titleText
+    let contentText: any = refs?.contentText
+    const imageObjects: any[] = refs?.imageObjects ? [...refs.imageObjects] : []
+    const imageDeleteButtons: any[] = refs?.imageDeleteButtons ? [...refs.imageDeleteButtons] : []
 
     const resolvedCardObject = overrideCardObject ?? cardObject
     if (!resolvedCardObject || !contentText) return null
@@ -363,7 +480,9 @@ export function InfiniteCanvas() {
       resolvedCardObject.setCoords()
     }
 
-    canvas.requestRenderAll()
+    if (options?.render ?? true) {
+      canvas.requestRenderAll()
+    }
 
     return {
       title: titleText?.text || '',
@@ -373,7 +492,7 @@ export function InfiniteCanvas() {
         height: options?.resizeHeight ? nextHeight : resolvedBounds.height
       }
     }
-  }, [getCardBounds, sanitizeBounds])
+  }, [ensureCardRefs, getCardBounds, sanitizeBounds])
   const fitCardToText = useCallback((cardId: string) => {
     return layoutCardObjects(cardId, { fitTextWidth: true, resizeHeight: true })
   }, [layoutCardObjects])
@@ -468,10 +587,11 @@ export function InfiniteCanvas() {
       upperCanvasEl?.removeEventListener('contextmenu', nativeContextMenuLogger)
       upperCanvasEl?.removeEventListener('mousedown', nativeMouseDownLogger)
       upperCanvasEl?.removeEventListener('mousemove', nativeMouseMoveTracker)
+      clearCardObjectIndex()
       canvas.dispose()
       fabricRef.current = null
     }
-  }, [])
+  }, [clearCardObjectIndex])
 
   const {
     zoom: controlZoom,
@@ -525,6 +645,7 @@ export function InfiniteCanvas() {
     }
 
     const renderVersion = ++renderVersionRef.current
+    clearCardObjectIndex()
     canvas.clear()
     const pendingImageLoads: Promise<void>[] = []
 
@@ -534,12 +655,15 @@ export function InfiniteCanvas() {
         const { cardObject, titleText, contentText } = renderCard(element, { isEditing: false }) as CardRenderResult
         // Add card background
         canvas.add(cardObject)
+        registerCanvasObject(cardObject)
         // Add title if present
         if (titleText) {
           canvas.add(titleText)
+          registerCanvasObject(titleText)
         }
         // Add content text
         canvas.add(contentText)
+        registerCanvasObject(contentText)
 
         pendingImageLoads.push((async () => {
           for (const [imageIndex, image] of card.images.entries()) {
@@ -565,6 +689,7 @@ export function InfiniteCanvas() {
                 naturalHeight: imageObject.height
               }
               canvas.add(imageObject)
+              registerCanvasObject(imageObject)
 
             } catch (error) {
               console.warn('Failed to load card image', error)
@@ -572,7 +697,7 @@ export function InfiniteCanvas() {
           }
 
           if (renderVersion === renderVersionRef.current) {
-            layoutCardObjects(card.id, { resizeHeight: false })
+            layoutCardObjects(card.id, { resizeHeight: false, render: false })
           }
         })())
       }
@@ -583,7 +708,7 @@ export function InfiniteCanvas() {
     if (renderVersion === renderVersionRef.current) {
       canvas.renderAll()
     }
-  }, [elements, layoutCardObjects])
+  }, [clearCardObjectIndex, elements, layoutCardObjects, registerCanvasObject])
 
   useEffect(() => {
     void loadLastOpenedDocument()
@@ -721,12 +846,38 @@ export function InfiniteCanvas() {
         return
       }
 
+      if (cardEntries.length === 1) {
+        const entry = cardEntries[0]
+        const session = singleCardDragSessionRef.current
+        const isSameSession =
+          session &&
+          session.target === entry.cardObject &&
+          session.cardId === entry.cardId
+
+        if (!isSameSession) {
+          singleCardDragSessionRef.current = {
+            target: entry.cardObject,
+            cardId: entry.cardId,
+            previousPoint: getDragAnchorPoint(entry.cardObject)
+          }
+        } else {
+          const point = getDragAnchorPoint(entry.cardObject)
+          const frameDx = point.x - session.previousPoint.x
+          const frameDy = point.y - session.previousPoint.y
+          session.previousPoint = point
+          moveCardLinkedObjectsByDelta(entry.cardId, frameDx, frameDy)
+        }
+
+        canvas.requestRenderAll()
+        return
+      }
+
       for (const entry of cardEntries) {
         const bounds = sanitizeBounds(getCardBounds(entry.cardObject))
         if (!bounds) continue
         layoutCardObjects(
           entry.cardId,
-          { resizeHeight: false, recalculateText: false },
+          { resizeHeight: false, recalculateText: false, render: false },
           entry.cardObject,
           bounds
         )
@@ -746,7 +897,7 @@ export function InfiniteCanvas() {
         if (!bounds) continue
         layoutCardObjects(
           entry.cardId,
-          { resizeHeight: false, recalculateText: false },
+          { resizeHeight: false, recalculateText: false, render: false },
           entry.cardObject,
           bounds
         )
@@ -811,7 +962,12 @@ export function InfiniteCanvas() {
             }
           }
 
-          const fitted = layoutCardObjects(cardId, { resizeHeight: false, recalculateText: true }, cardObject, bounds)
+          const fitted = layoutCardObjects(
+            cardId,
+            { resizeHeight: false, recalculateText: true, render: false },
+            cardObject,
+            bounds
+          )
           const title = fitted?.title || ''
           const content = fitted?.content || ''
           if (currentElement.title !== title || currentElement.content !== content) {
@@ -852,6 +1008,7 @@ export function InfiniteCanvas() {
         canvas.requestRenderAll()
       } finally {
         activeSelectionDragSessionRef.current = null
+        singleCardDragSessionRef.current = null
         isPointerTransformingRef.current = false
         handlingObjectModifiedRef.current = false
       }
@@ -861,10 +1018,19 @@ export function InfiniteCanvas() {
       const target = e.target as any
       if (target?.data?.type === 'card') {
         isPointerTransformingRef.current = true
+        const cardId = typeof target.data?.id === 'string' ? (target.data.id as string) : null
+        if (cardId) {
+          singleCardDragSessionRef.current = {
+            target,
+            cardId,
+            previousPoint: getDragAnchorPoint(target)
+          }
+        }
       }
     }
 
     const handleMouseUp = () => {
+      singleCardDragSessionRef.current = null
       isPointerTransformingRef.current = false
     }
 
@@ -978,7 +1144,10 @@ export function InfiniteCanvas() {
     if (!canvas) return
 
     const existingDeleteButtons = canvas.getObjects().filter((obj) => (obj as any).data?.isCardImageDelete)
-    existingDeleteButtons.forEach((obj) => canvas.remove(obj))
+    existingDeleteButtons.forEach((obj) => {
+      unregisterCanvasObject(obj as any)
+      canvas.remove(obj)
+    })
 
     if (!isEditingCardId) {
       canvas.requestRenderAll()
@@ -1018,10 +1187,11 @@ export function InfiniteCanvas() {
         isCardImageDelete: true
       }
       canvas.add(deleteButton)
+      registerCanvasObject(deleteButton)
     })
 
     layoutCardObjects(isEditingCardId, { resizeHeight: false })
-  }, [isEditingCardId, layoutCardObjects])
+  }, [isEditingCardId, layoutCardObjects, registerCanvasObject, unregisterCanvasObject])
 
   // Double-click to edit or create card
   useEffect(() => {
