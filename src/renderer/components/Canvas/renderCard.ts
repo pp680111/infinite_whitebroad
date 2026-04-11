@@ -59,6 +59,7 @@ export function renderCard(
       width: size.width - 20,
       fontSize: 14,
       fontWeight: 'bold',
+      splitByGrapheme: true,
       fill: '#333',
       objectCaching: false,
       noScaleCache: false,
@@ -83,6 +84,7 @@ export function renderCard(
   const contentText = new Textbox(displayContent, {
     width: size.width - 20,
     fontSize: 13,
+    splitByGrapheme: true,
     fill: content ? '#555' : '#999',
     objectCaching: false,
     noScaleCache: false,

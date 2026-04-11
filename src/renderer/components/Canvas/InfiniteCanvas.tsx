@@ -53,6 +53,7 @@ export function InfiniteCanvas() {
   const [autoSaveStatus, setAutoSaveStatus] = useState<'saving' | 'done' | null>(null)
   const autoSaveToastTimerRef = useRef<number | null>(null)
   const isEditingCardIdRef = useRef<string | null>(null)
+  const pasteTriggeredAutoFitWidthRef = useRef<Set<string>>(new Set())
   const lastPointerClientRef = useRef<{ x: number; y: number } | null>(null)
   const copiedCardRef = useRef<Omit<CardElement, 'id'> | null>(null)
   const pasteCountRef = useRef(0)
@@ -354,6 +355,30 @@ export function InfiniteCanvas() {
       isApplyingHistoryRef.current = false
     }
   }, [applyCommandRedo])
+  const measureUnwrappedTextWidth = useCallback((textbox?: any) => {
+    if (!textbox) return 0
+
+    const originalWidth = typeof textbox.width === 'number' ? textbox.width : 0
+    const originalSplitByGrapheme = Boolean(textbox.splitByGrapheme)
+
+    textbox.set({
+      splitByGrapheme: false,
+      width: 100000
+    })
+    textbox.initDimensions?.()
+    const measuredWidth = Math.max(
+      textbox.dynamicMinWidth || 0,
+      textbox.calcTextWidth ? textbox.calcTextWidth() : 0
+    )
+
+    textbox.set({
+      splitByGrapheme: originalSplitByGrapheme,
+      width: originalWidth
+    })
+    textbox.initDimensions?.()
+
+    return measuredWidth
+  }, [])
   const layoutCardObjects = useCallback((
     cardId: string,
     options?: { fitTextWidth?: boolean; resizeHeight?: boolean; recalculateText?: boolean; render?: boolean },
@@ -385,16 +410,8 @@ export function InfiniteCanvas() {
     if (options?.fitTextWidth) {
       const minCardWidth = 200
       const horizontalPadding = 20
-      const titleTextWidth = titleText
-        ? Math.max(
-            titleText.dynamicMinWidth || 0,
-            titleText.calcTextWidth ? titleText.calcTextWidth() : 0
-          )
-        : 0
-      const contentTextWidth = Math.max(
-        contentText.dynamicMinWidth || 0,
-        contentText.calcTextWidth ? contentText.calcTextWidth() : 0
-      )
+      const titleTextWidth = titleText ? measureUnwrappedTextWidth(titleText) : 0
+      const contentTextWidth = measureUnwrappedTextWidth(contentText)
       const nextWidth = Math.max(
         minCardWidth,
         Math.ceil(Math.max(titleTextWidth, contentTextWidth) + horizontalPadding)
@@ -418,6 +435,7 @@ export function InfiniteCanvas() {
 
     if (titleText) {
       titleText.set({
+        splitByGrapheme: true,
         width: innerWidth,
         left: cardLeft + 10,
         top: currentTop
@@ -430,6 +448,7 @@ export function InfiniteCanvas() {
     }
 
     contentText.set({
+      splitByGrapheme: true,
       width: innerWidth,
       left: cardLeft + 10,
       top: currentTop
@@ -492,9 +511,9 @@ export function InfiniteCanvas() {
         height: options?.resizeHeight ? nextHeight : resolvedBounds.height
       }
     }
-  }, [ensureCardRefs, getCardBounds, sanitizeBounds])
-  const fitCardToText = useCallback((cardId: string) => {
-    return layoutCardObjects(cardId, { fitTextWidth: true, resizeHeight: true })
+  }, [ensureCardRefs, getCardBounds, measureUnwrappedTextWidth, sanitizeBounds])
+  const layoutCardForEditing = useCallback((cardId: string, fitWidth: boolean) => {
+    return layoutCardObjects(cardId, { fitTextWidth: fitWidth, resizeHeight: true })
   }, [layoutCardObjects])
   const findCardTextboxes = useCallback((cardId: string) => {
     const canvas = fabricRef.current
@@ -1216,11 +1235,12 @@ export function InfiniteCanvas() {
 
       const target = canvas.findTarget(opt.e as any)
       if (target && (target as any).data?.type === 'card') {
-        const cardEl = useElementsStore.getState().getElement((target as any).data.id) as CardElement
-        if (cardEl && !cardEl.locked) {
-          const cardId = cardEl.id
-          setIsEditingCardId(cardId)
-          useElementsStore.getState().setEditingCard(cardId)
+          const cardEl = useElementsStore.getState().getElement((target as any).data.id) as CardElement
+          if (cardEl && !cardEl.locked) {
+            const cardId = cardEl.id
+            pasteTriggeredAutoFitWidthRef.current.delete(cardId)
+            setIsEditingCardId(cardId)
+            useElementsStore.getState().setEditingCard(cardId)
 
           const { titleTextbox: titleText, contentTextbox: contentText } = findCardTextboxes(cardId)
 
@@ -1264,7 +1284,9 @@ export function InfiniteCanvas() {
           const { titleTextbox, contentTextbox } = findCardTextboxes(editingCardId)
 
           if (titleTextbox || contentTextbox) {
-            const fitted = fitCardToText(editingCardId)
+            const shouldFitWidth = pasteTriggeredAutoFitWidthRef.current.has(editingCardId)
+            const fitted = layoutCardForEditing(editingCardId, shouldFitWidth)
+            pasteTriggeredAutoFitWidthRef.current.delete(editingCardId)
             const title = fitted ? fitted.title : (titleTextbox?.text || '')
             const content = fitted ? fitted.content : (contentTextbox?.text || '')
 
@@ -1309,7 +1331,7 @@ export function InfiniteCanvas() {
 
     canvas.on('mouse:dblclick', handleDblClick)
     return () => { canvas.off('mouse:dblclick', handleDblClick) }
-  }, [cloneElement, currentTool, addCard, findCardTextboxes, setTool, syncElementsToCanvas, updateCardWithHistory])
+  }, [cloneElement, currentTool, addCard, findCardTextboxes, layoutCardForEditing, setTool, syncElementsToCanvas, updateCardWithHistory])
 
   // Handle selection
   useEffect(() => {
@@ -1432,7 +1454,9 @@ export function InfiniteCanvas() {
   // Handle card save
   const saveEditingCard = useCallback((texts: { title?: string; content: string }) => {
     if (isEditingCardId) {
-      const fitted = fitCardToText(isEditingCardId)
+      const shouldFitWidth = pasteTriggeredAutoFitWidthRef.current.has(isEditingCardId)
+      const fitted = layoutCardForEditing(isEditingCardId, shouldFitWidth)
+      pasteTriggeredAutoFitWidthRef.current.delete(isEditingCardId)
 
       // Save text content to store
       updateCardWithHistory(isEditingCardId, {
@@ -1459,7 +1483,7 @@ export function InfiniteCanvas() {
       useElementsStore.getState().setEditingCard(null)
       useCanvasStore.getState().setDirty(true)
     }
-  }, [findCardTextboxes, fitCardToText, isEditingCardId, updateCardWithHistory])
+  }, [findCardTextboxes, isEditingCardId, layoutCardForEditing, updateCardWithHistory])
 
   const cancelEditingCard = useCallback(() => {
     // Disable editing on the textboxes without re-rendering
@@ -1479,6 +1503,9 @@ export function InfiniteCanvas() {
 
     setIsEditingCardId(null)
     useElementsStore.getState().setEditingCard(null)
+    if (isEditingCardId) {
+      pasteTriggeredAutoFitWidthRef.current.delete(isEditingCardId)
+    }
   }, [findCardTextboxes, isEditingCardId])
 
   // Handle text editing completion
@@ -1491,7 +1518,11 @@ export function InfiniteCanvas() {
       const cardId = target?.data?.cardId
       if (!cardId) return
 
-      const fitted = fitCardToText(cardId)
+      const shouldFitWidth = pasteTriggeredAutoFitWidthRef.current.has(cardId)
+      const fitted = layoutCardForEditing(cardId, shouldFitWidth)
+      if (shouldFitWidth) {
+        pasteTriggeredAutoFitWidthRef.current.delete(cardId)
+      }
       if (!fitted) return
 
       useCanvasStore.getState().setDirty(true)
@@ -1505,7 +1536,9 @@ export function InfiniteCanvas() {
 
       if (!titleTextbox && !contentTextbox) return
 
-      const fitted = fitCardToText(currentEditingId)
+      const shouldFitWidth = pasteTriggeredAutoFitWidthRef.current.has(currentEditingId)
+      const fitted = layoutCardForEditing(currentEditingId, shouldFitWidth)
+      pasteTriggeredAutoFitWidthRef.current.delete(currentEditingId)
       const title = fitted ? fitted.title : (titleTextbox?.text || '')
       const content = fitted ? fitted.content : (contentTextbox?.text || '')
 
@@ -1557,7 +1590,9 @@ export function InfiniteCanvas() {
       if (!titleTextbox && !contentTextbox) return
 
       // Get the current text from textboxes
-      const fitted = fitCardToText(currentEditingId)
+      const shouldFitWidth = pasteTriggeredAutoFitWidthRef.current.has(currentEditingId)
+      const fitted = layoutCardForEditing(currentEditingId, shouldFitWidth)
+      pasteTriggeredAutoFitWidthRef.current.delete(currentEditingId)
       const title = fitted ? fitted.title : (titleTextbox?.text || '')
       const content = fitted ? fitted.content : (contentTextbox?.text || '')
 
@@ -1595,7 +1630,7 @@ export function InfiniteCanvas() {
       ;(canvas.off as any)('textbox:editing:exited', handleEditingExited)
       ;(canvas.off as any)('mouse:down', handleMouseDown)
     }
-  }, [findCardTextboxes, fitCardToText, isEditingCardId, saveEditingCard, updateCardWithHistory])
+  }, [findCardTextboxes, isEditingCardId, layoutCardForEditing, saveEditingCard, updateCardWithHistory])
 
   // Navigate canvas to show a specific card
   const navigateToCard = useCallback((cardId: string) => {
@@ -1904,6 +1939,7 @@ export function InfiniteCanvas() {
         if (!plainText) return
 
         e.preventDefault()
+        pasteTriggeredAutoFitWidthRef.current.add(editingCardId)
         const selectionStart = target.selectionStart ?? target.value.length
         const selectionEnd = target.selectionEnd ?? selectionStart
         target.setRangeText(plainText, selectionStart, selectionEnd, 'end')
